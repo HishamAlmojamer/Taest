@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: 16 185 129;
+    --color-primary-dark: 5 150 105;
+  }
+
+  body {
+    @apply font-sans antialiased bg-gray-50 text-gray-900 transition-colors duration-200;
+    font-family: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
+  }
+
+  .dark body,
+  .dark {
+    @apply bg-zinc-950 text-zinc-100;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-zinc-800;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 dark:bg-zinc-600 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400 dark:bg-zinc-500;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200;
+  }
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98];
+  }
+  .btn-outline {
+    @apply border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg transition-all font-medium active:scale-[0.98] dark:border-zinc-600 dark:hover:bg-zinc-800 dark:text-zinc-300;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6 dark:bg-zinc-900 dark:border-zinc-800;
+  }
+  .glass {
+    @apply bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-white/20 dark:border-zinc-700/30;
+  }
+  .input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:border-primary-500 outline-none transition-all bg-white dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100 dark:placeholder-zinc-500;
+  }
+  .input-error {
+    @apply border-red-500 focus-visible:ring-red-500 focus-visible:border-red-500;
+  }
+  .input-disabled {
+    @apply bg-gray-100 cursor-not-allowed dark:bg-zinc-800 dark:cursor-not-allowed;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1 dark:text-zinc-300;
+  }
+  .table-header {
+    @apply bg-gray-50 text-gray-600 text-sm font-semibold dark:bg-zinc-800 dark:text-zinc-400;
+  }
+  .table-row {
+    @apply border-b border-gray-100 hover:bg-gray-50 transition-colors dark:border-zinc-800 dark:hover:bg-zinc-800/50;
+  }
+}

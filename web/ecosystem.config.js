@@ -1,0 +1,35 @@
+module.exports = {
+  apps: [
+    {
+      name: 'backend',
+      cwd: './backend',
+      script: 'C:\\Users\\hicom\\AppData\\Local\\Programs\\Python\\Python312\\Scripts\\uvicorn.exe',
+      args: 'app.main:app --host 0.0.0.0 --port 8002 --reload',
+      interpreter: 'C:\\Users\\hicom\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+      watch: false,
+      env: { PYTHONPATH: '.' },
+      max_restarts: 10,
+      restart_delay: 3000,
+      exp_backoff_restart_delay: 100,
+    },
+    {
+      name: 'gateway',
+      cwd: './gateway',
+      script: 'dist/index.js',
+      watch: false,
+      max_restarts: 5,
+      restart_delay: 5000,
+      min_uptime: 10000,
+    },
+    {
+      name: 'frontend',
+      cwd: './frontend',
+      script: 'node',
+      args: 'node_modules/vite/bin/vite.js preview --port 5173 --host 0.0.0.0',
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 3000,
+      exp_backoff_restart_delay: 100,
+    },
+  ],
+};

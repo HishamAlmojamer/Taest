@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+*.swp
+.vscode/
+.opencode/
+.zencoder/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite3
+pg_backups/
+backups/
+
+# Docker volumes
+pgdata/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+web/frontend/dist/
+web/frontend/build/
+
+# Coverage
+coverage/
+htmlcov/
+
+# Cache
+.cache/
+*.pyc
