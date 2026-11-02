@@ -7,6 +7,9 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
+  // The backend emits ledger events server-to-server from the same host; do
+  // not let those internal calls consume the shared browser IP budget.
+  skip: (req) => req.path === '/api/ledger/emit',
 });
 
 export const authLimiter = rateLimit({

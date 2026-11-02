@@ -4,8 +4,9 @@
  * Accounting Logic for payment.received:
  *   When a customer payment is received:
  *
- *   1. DEBIT Bank/Cash (Asset increases)
- *      - Account: 1120 - Bank Account
+ *   1. DEBIT Cash (1111) or Bank (1121) depending on paymentMethod (Asset increases)
+ *      - Cash-explicit methods (cash / نقدي / COD) -> 1111 Cash
+ *      - All other methods (transfer, card, cheque, ...) -> 1121 Bank
  *      - Amount: payment amount
  *
  *   2. CREDIT Accounts Receivable (Asset decreases - customer owes less)
@@ -13,23 +14,22 @@
  *      - Amount: payment amount
  *
  *   Journal Entry:
- *     Dr. Bank Account        (1120)    amount
- *     Cr. Accounts Receivable  (1130)    amount
+ *     Dr. Cash|Bank            (1111|1121)    amount
+ *     Cr. Accounts Receivable  (1130)         amount
  *
  * Accounting Logic for payment.made:
  *   When a supplier payment is made:
  *
  *   1. DEBIT Accounts Payable (Liability decreases - we owe less)
- *      - Account: 2110 - Accounts Payable
+ *      - Account: 2111 - Accounts Payable
  *      - Amount: payment amount
  *
- *   2. CREDIT Bank/Cash (Asset decreases)
- *      - Account: 1120 - Bank Account
- *      - Amount: payment amount
+ *   2. CREDIT Cash (1111) or Bank (1121) depending on paymentMethod (Asset decreases)
+ *      - Cash-explicit methods -> 1111 Cash, otherwise -> 1121 Bank
  *
  *   Journal Entry:
- *     Dr. Accounts Payable    (2110)    amount
- *     Cr. Bank Account        (1120)    amount
+ *     Dr. Accounts Payable    (2111)         amount
+ *     Cr. Cash|Bank           (1111|1121)    amount
  */
 
 import { PoolClient } from 'pg';
@@ -37,17 +37,18 @@ import { BaseEvent, PaymentReceivedPayload, PaymentMadePayload } from '../events
 import { postAndFinalizeEntry } from '../ledger/JournalEntryService';
 import { CreateJournalEntryData, STANDARD_ACCOUNTS } from '../ledger/types';
 import { logger } from '../../services/logger';
-import { resolveAccount } from '../utils/accountResolver';
+import { resolveAccounts, isCashPaymentMethod } from '../utils/accountResolver';
 
 /**
  * Handle the payment.received event
  *
- * Creates a balanced journal entry debiting Bank and crediting AR.
+ * Creates a balanced journal entry debiting Bank (or Cash for cash payments)
+ * and crediting AR.
  */
 export async function handlePaymentReceived(
   event: BaseEvent<PaymentReceivedPayload>,
   client: PoolClient
-): Promise<void> {
+): Promise<{ entryId: number; entryNumber: string }> {
   const { payload, metadata } = event;
 
   logger.info(
@@ -55,22 +56,27 @@ export async function handlePaymentReceived(
     `(id: ${payload.paymentId}, amount: ${payload.amount}, method: ${payload.paymentMethod})`
   );
 
-  // Resolve Account IDs
-  const bankAccount = await resolveAccount(
-    client,
+  // Resolve Account IDs (single query for performance).
+  // Standard accounts: CASH=1111, BANK=1121.
+  const accountCodes = [
+    STANDARD_ACCOUNTS.CASH.code,
     STANDARD_ACCOUNTS.BANK.code,
-    metadata.companyId
-  );
-  const arAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.ACCOUNTS_RECEIVABLE.code,
-    metadata.companyId
-  );
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const bankAccount = accounts.get(STANDARD_ACCOUNTS.BANK.code)!;
+  const cashAccount = accounts.get(STANDARD_ACCOUNTS.CASH.code)!;
+  const arAccount = accounts.get(STANDARD_ACCOUNTS.ACCOUNTS_RECEIVABLE.code)!;
+
+  // Cash payments land in the Cash account; everything else in the Bank account.
+  const useCash = isCashPaymentMethod(payload.paymentMethod);
+  const fundsAccount = useCash ? cashAccount : bankAccount;
 
   // Build Journal Entry Lines
   const lines: CreateJournalEntryData['lines'] = [
     {
-      accountId: bankAccount.id,
+      accountId: fundsAccount.id,
       description: `Payment received from ${payload.customerName} via ${payload.paymentMethod}`,
       debit: payload.amount,
       credit: 0,
@@ -99,27 +105,29 @@ export async function handlePaymentReceived(
 
   const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
 
-  // Link Journal Entry to Payment
-  await client.query(
-    `UPDATE customer_payments SET journal_entry_id = $1 WHERE id = $2`,
-    [journalEntry.id, payload.paymentId]
-  );
-
   logger.info(
     `PaymentEventHandler: journal entry ${journalEntry.entryNumber} created for customer payment ` +
-    `| Dr. Bank: ${payload.amount} | Cr. AR: ${payload.amount} | Customer: ${payload.customerName}`
+    `| Dr. ${useCash ? 'Cash' : 'Bank'}: ${payload.amount} | Cr. AR: ${payload.amount} | Customer: ${payload.customerName}`
   );
+
+  // Return the created entry so the backend links customer_payments.journal_entry_id
+  // within its OWN transaction. We deliberately avoid updating `customer_payments`
+  // here: the operational transaction is still open on the backend connection, and
+  // an UPDATE from this separate connection would block on the uncommitted row
+  // (cross-transaction deadlock).
+  return { entryId: journalEntry.id, entryNumber: journalEntry.entryNumber };
 }
 
 /**
  * Handle the payment.made event
  *
- * Creates a balanced journal entry debiting AP and crediting Bank.
+ * Creates a balanced journal entry debiting AP and crediting Bank (or Cash
+ * for cash payments).
  */
 export async function handlePaymentMade(
   event: BaseEvent<PaymentMadePayload>,
   client: PoolClient
-): Promise<void> {
+): Promise<{ entryId: number; entryNumber: string }> {
   const { payload, metadata } = event;
 
   logger.info(
@@ -127,17 +135,22 @@ export async function handlePaymentMade(
     `(id: ${payload.paymentId}, amount: ${payload.amount}, method: ${payload.paymentMethod})`
   );
 
-  // Resolve Account IDs
-  const apAccount = await resolveAccount(
-    client,
+  // Resolve Account IDs (single query for performance).
+  // Standard accounts: CASH=1111, BANK=1121.
+  const accountCodes = [
     STANDARD_ACCOUNTS.ACCOUNTS_PAYABLE.code,
-    metadata.companyId
-  );
-  const bankAccount = await resolveAccount(
-    client,
+    STANDARD_ACCOUNTS.CASH.code,
     STANDARD_ACCOUNTS.BANK.code,
-    metadata.companyId
-  );
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const apAccount = accounts.get(STANDARD_ACCOUNTS.ACCOUNTS_PAYABLE.code)!;
+  const bankAccount = accounts.get(STANDARD_ACCOUNTS.BANK.code)!;
+  const cashAccount = accounts.get(STANDARD_ACCOUNTS.CASH.code)!;
+
+  // Cash payments come out of the Cash account; everything else from Bank.
+  const useCash = isCashPaymentMethod(payload.paymentMethod);
+  const fundsAccount = useCash ? cashAccount : bankAccount;
 
   // Build Journal Entry Lines
   const lines: CreateJournalEntryData['lines'] = [
@@ -149,7 +162,7 @@ export async function handlePaymentMade(
       partnerId: payload.supplierId,
     },
     {
-      accountId: bankAccount.id,
+      accountId: fundsAccount.id,
       description: `Payment made to ${payload.supplierName}`,
       debit: 0,
       credit: payload.amount,
@@ -171,14 +184,12 @@ export async function handlePaymentMade(
 
   const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
 
-  // Link Journal Entry to Payment
-  await client.query(
-    `UPDATE supplier_payments SET journal_entry_id = $1 WHERE id = $2`,
-    [journalEntry.id, payload.paymentId]
-  );
-
   logger.info(
     `PaymentEventHandler: journal entry ${journalEntry.entryNumber} created for supplier payment ` +
-    `| Dr. AP: ${payload.amount} | Cr. Bank: ${payload.amount} | Supplier: ${payload.supplierName}`
+    `| Dr. AP: ${payload.amount} | Cr. ${useCash ? 'Cash' : 'Bank'}: ${payload.amount} | Supplier: ${payload.supplierName}`
   );
+
+  // Return the created entry so the backend links supplier_payments.journal_entry_id
+  // within its OWN transaction (avoids cross-transaction deadlock on the uncommitted row).
+  return { entryId: journalEntry.id, entryNumber: journalEntry.entryNumber };
 }

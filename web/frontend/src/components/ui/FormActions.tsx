@@ -20,7 +20,7 @@ export function FormActions({
   return (
     <div
       className={cn(
-        'sticky bottom-0 bg-white dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 p-4 flex items-center justify-end gap-3 z-10',
+        'sticky bottom-0 z-10 flex items-center justify-end gap-3 border-t border-gray-200 bg-white/95 p-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95',
         className
       )}
     >
@@ -30,7 +30,16 @@ export function FormActions({
         </button>
       )}
       {onSave && (
-        <button type="button" onClick={onSave} disabled={isSubmitting} className="btn-primary">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={isSubmitting}
+          aria-busy={isSubmitting}
+          className="btn-primary"
+        >
+          {isSubmitting && (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+          )}
           {isSubmitting ? 'جاري الحفظ...' : saveLabel}
         </button>
       )}

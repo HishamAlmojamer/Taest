@@ -1,76 +1,87 @@
-
-
-v
-ersion: '3.8'
+# Production-style single-host stack.
+#   cp .env.example .env   # then set POSTGRES_PASSWORD and JWT_SECRET
+#   docker compose up -d --build
+# Only the frontend (nginx) is published; the API, database and cache stay on
+# the private Docker network.
 
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: warehouse_management
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse_management}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d warehouse_management"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-warehouse_management}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: >
-      sh -c "alembic upgrade head 2>/dev/null || true &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/warehouse_management
-      JWT_SECRET: erp-super-secret-key-2024
-      DEBUG: "true"
-    ports:
-      - "8001:8001"
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-warehouse_management}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      DEBUG: "false"
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_FULL_NAME: ${BOOTSTRAP_ADMIN_FULL_NAME:-System Administrator}
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
-      - /app/__pycache__
+      redis:
+        condition: service_healthy
 
   gateway:
     build:
       context: ./gateway
       dockerfile: Dockerfile
-    command: npm run dev
+    restart: unless-stopped
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       PORT: "3001"
-      JWT_SECRET: erp-super-secret-key-2024
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-warehouse_management}
       PYTHON_BACKEND_URL: http://backend:8001
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3001
-    ports:
-      - "3001:3001"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
     depends_on:
       - backend
-    volumes:
-      - ./gateway:/app
-      - /app/node_modules
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    command: npm run dev -- --host 0.0.0.0
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${HTTP_PORT:-8080}:80"
     depends_on:
       - gateway
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
 volumes:
   pgdata:
+  redisdata:

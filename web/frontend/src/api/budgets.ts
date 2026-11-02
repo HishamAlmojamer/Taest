@@ -31,3 +31,7 @@ export async function getBudgetAlerts(thresholdPercent?: number) {
   if (thresholdPercent) params.threshold_percent = thresholdPercent;
   return await get<any>('/budgets/alerts', params);
 }
+
+export async function rejectBudget(id: number, reason: string) {
+  return await post<any>(`/budgets/${id}/reject`, { reason });
+}

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, Numeric, Text, Index
+from sqlalchemy import String, Boolean, Integer, Numeric, Text, Index, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -18,6 +18,7 @@ class Account(Base):
     account_code: Mapped[str] = mapped_column(String(100), nullable=False)
     account_name: Mapped[str] = mapped_column(String(200), nullable=False)
     account_name_en: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    account_name_ar: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     account_type: Mapped[str] = mapped_column(String(50), nullable=False)
     parent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_control: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
@@ -27,6 +28,7 @@ class Account(Base):
     opening_balance_date: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     company_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
@@ -67,23 +69,51 @@ class JournalEntryLine(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    journal_entry_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    account_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    journal_entry_id: Mapped[int] = mapped_column(Integer, ForeignKey("journal_entries.id"), nullable=False)
+    account_id: Mapped[int] = mapped_column(Integer, ForeignKey("accounts.id"), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     debit: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     credit: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     currency_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     currency_rate: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     cost_center_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    partner_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    project_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     reconciliation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     company_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
-class FiscalPeriod(Base):
-    __tablename__ = "fiscal_periods"
+class FiscalYear(Base):
+    __tablename__ = "fiscal_years"
+    __table_args__ = (
+        Index("ix_fiscal_years_start_date", "start_date"),
+        Index("ix_fiscal_years_is_closed", "is_closed"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    name_en: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    start_date: Mapped[datetime] = mapped_column(nullable=False)
+    end_date: Mapped[datetime] = mapped_column(nullable=False)
+    is_closed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    closed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    opening_balances_posted: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    company_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
+class FiscalPeriod(Base):
+    __tablename__ = "fiscal_periods"
+    __table_args__ = (
+        Index("ix_fiscal_periods_year", "fiscal_year_id"),
+        Index("ix_fiscal_periods_dates", "start_date", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fiscal_year_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     name_en: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     start_date: Mapped[datetime] = mapped_column(nullable=False)
@@ -93,6 +123,8 @@ class FiscalPeriod(Base):
     closed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    # soft-close: allows quarter-accrual without hard-closing
+    is_soft_closed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
 
 class CostCenter(Base):
@@ -105,3 +137,20 @@ class CostCenter(Base):
     parent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
+class RecurringJETemplate(Base):
+    __tablename__ = "recurring_je_templates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    name_en: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    frequency: Mapped[str] = mapped_column(String(50), nullable=False, default="MONTHLY")
+    next_run_date: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    last_run_date: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    template_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    company_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

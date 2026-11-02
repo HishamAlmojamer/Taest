@@ -22,11 +22,13 @@ class UserResponse(BaseModel):
     username: str
     full_name: str = ""
     role: str = "user"
+    role_id: Optional[int] = None
     is_active: bool = True
     email: Optional[str] = None
     phone: Optional[str] = None
-    last_login_at: Optional[str] = None
+    last_login_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+    permissions: list[str] = []
 
 
 class ChangePasswordRequest(BaseModel):

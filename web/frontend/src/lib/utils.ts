@@ -8,6 +8,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function getCommandShortcutLabel(): string {
+  if (typeof navigator === 'undefined') return 'Ctrl K';
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? '⌘K' : 'Ctrl K';
+}
+
 export function formatCurrency(amount: number, currency: string = 'SAR'): string {
   return new Intl.NumberFormat('ar-SA', {
     style: 'currency',
@@ -59,6 +64,10 @@ export function getStatusLabel(status: string, locale: string = 'ar'): string {
     PARTIALLY_RECEIVED: { ar: 'مستلم جزئياً', en: 'Partially Received' },
     POSTED: { ar: 'محرر', en: 'Posted' },
     REVERSED: { ar: 'معكوس', en: 'Reversed' },
+    Draft: { ar: 'مسودة', en: 'Draft' },
+    Posted: { ar: 'مرحّل', en: 'Posted' },
+    Voided: { ar: 'ملغي', en: 'Voided' },
+    Void: { ar: 'ملغي', en: 'Voided' },
     ACTIVE: { ar: 'نشط', en: 'Active' },
     INACTIVE: { ar: 'غير نشط', en: 'Inactive' },
     ON_LEAVE: { ar: 'في إجازة', en: 'On Leave' },
@@ -115,6 +124,15 @@ export function getStatusLabel(status: string, locale: string = 'ar'): string {
     EMAIL: { ar: 'بريد إلكتروني', en: 'Email' },
     MEETING: { ar: 'اجتماع', en: 'Meeting' },
     NOTE: { ar: 'ملاحظة', en: 'Note' },
+    OPEN: { ar: 'مفتوحة', en: 'Open' },
+    TASK: { ar: 'مهمة', en: 'Task' },
+    WHATSAPP: { ar: 'واتساب', en: 'WhatsApp' },
+    GOLD: { ar: 'ذهبي', en: 'Gold' },
+    SILVER: { ar: 'فضي', en: 'Silver' },
+    BRONZE: { ar: 'برونزي', en: 'Bronze' },
+    VIP: { ar: 'كبار العملاء', en: 'VIP' },
+    STANDARD: { ar: 'قياسي', en: 'Standard' },
+    ANNUAL_2026: { ar: '2026', en: '2026' },
   };
   const map = statusMap[status];
   return map ? map[locale] || status : status;
@@ -132,6 +150,10 @@ export function getStatusColor(status: string): string {
     PARTIALLY_RECEIVED: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
     POSTED: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
     REVERSED: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
+    Draft: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
+    Posted: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
+    Voided: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
+    Void: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
     ACTIVE: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
     INACTIVE: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
     ON_LEAVE: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
@@ -154,6 +176,12 @@ export function getStatusColor(status: string): string {
     QUALIFIED: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
     PROPOSAL: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
     NEGOTIATION: 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
+    OPEN: 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
+    TASK: 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
+    WHATSAPP: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
+    GOLD: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
+    SILVER: 'bg-zinc-500/10 text-zinc-600 dark:bg-zinc-400/10 dark:text-zinc-400',
+    BRONZE: 'bg-orange-500/10 text-orange-600 dark:bg-orange-400/10 dark:text-orange-400',
   };
   return colorMap[status] || 'bg-zinc-500/10 text-zinc-600 dark:bg-zinc-400/10 dark:text-zinc-400';
 }

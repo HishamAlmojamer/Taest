@@ -281,11 +281,12 @@ CREATE INDEX IF NOT EXISTS ix_invoices_date ON invoices(invoice_date);
 CREATE INDEX IF NOT EXISTS ix_invoices_company ON invoices(company_id);
 
 -- =============================================================================
--- INVENTORY TRANSACTIONS
+-- STOCK MOVEMENTS (Inventory Transactions)
 -- =============================================================================
 -- Records all inventory movements (receipts, issues, transfers).
+-- Table name matches Python backend's StockMovement model.
 --
-CREATE TABLE IF NOT EXISTS inventory_transactions (
+CREATE TABLE IF NOT EXISTS stock_movements (
     id                    SERIAL PRIMARY KEY,
     product_id            INTEGER NOT NULL,
     warehouse_id          INTEGER NOT NULL,
@@ -303,17 +304,18 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS ix_inv_txn_product ON inventory_transactions(product_id);
-CREATE INDEX IF NOT EXISTS ix_inv_txn_warehouse ON inventory_transactions(warehouse_id);
-CREATE INDEX IF NOT EXISTS ix_inv_txn_type ON inventory_transactions(transaction_type);
-CREATE INDEX IF NOT EXISTS ix_inv_txn_date ON inventory_transactions(created_at);
+CREATE INDEX IF NOT EXISTS ix_inv_txn_product ON stock_movements(product_id);
+CREATE INDEX IF NOT EXISTS ix_inv_txn_warehouse ON stock_movements(warehouse_id);
+CREATE INDEX IF NOT EXISTS ix_inv_txn_type ON stock_movements(transaction_type);
+CREATE INDEX IF NOT EXISTS ix_inv_txn_date ON stock_movements(created_at);
 
 -- =============================================================================
--- EMPLOYEES PAYROLL
+-- HR PAYROLL
 -- =============================================================================
 -- Records employee payroll with proper NUMERIC types for salary components.
+-- Table name matches Python backend's HRPayroll model.
 --
-CREATE TABLE IF NOT EXISTS employees_payroll (
+CREATE TABLE IF NOT EXISTS hr_payroll (
     id                        SERIAL PRIMARY KEY,
     employee_id               INTEGER NOT NULL,
     basic_salary              NUMERIC(15, 4) NOT NULL DEFAULT 0 CHECK (basic_salary >= 0),
@@ -337,9 +339,9 @@ CREATE TABLE IF NOT EXISTS employees_payroll (
     CONSTRAINT uq_payroll_period UNIQUE (employee_id, period_month, period_year)
 );
 
-CREATE INDEX IF NOT EXISTS ix_payroll_employee ON employees_payroll(employee_id);
-CREATE INDEX IF NOT EXISTS ix_payroll_status ON employees_payroll(status);
-CREATE INDEX IF NOT EXISTS ix_payroll_period ON employees_payroll(period_year, period_month);
+CREATE INDEX IF NOT EXISTS ix_payroll_employee ON hr_payroll(employee_id);
+CREATE INDEX IF NOT EXISTS ix_payroll_status ON hr_payroll(status);
+CREATE INDEX IF NOT EXISTS ix_payroll_period ON hr_payroll(period_year, period_month);
 
 -- =============================================================================
 -- SEED DATA: Standard Chart of Accounts
@@ -356,6 +358,7 @@ VALUES
     ('1110', 'Cash', 'الصندوق', 'Asset', true, 'SAR'),
     ('1120', 'Bank Accounts', 'الحسابات البنكية', 'Asset', true, 'SAR'),
     ('1130', 'Accounts Receivable', 'المدينون', 'Asset', true, 'SAR'),
+    ('1131', 'Employee Advances', 'سلف الموظفين', 'Asset', true, 'SAR'),
     ('1210', 'Inventory', 'المخزون', 'Asset', true, 'SAR'),
     ('1220', 'Prepaid Expenses', 'المصروفات المدفوعة مقدماً', 'Asset', true, 'SAR'),
     ('1230', 'Goods Received Not Invoiced', 'البضائع المستلمة غير المفوترة', 'Asset', true, 'SAR'),

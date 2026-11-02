@@ -1,8 +1,8 @@
-"""
+﻿"""
 Budget Management endpoints with budget vs actual comparison.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, and_
@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.budget import GLBudget
 from app.models.accounting import Account, JournalEntry, JournalEntryLine, FiscalPeriod
-from app.utils.deps import get_current_active_user
+from app.routers.accounting import _LEDGER_STATUSES
+from app.schemas.budgets import BudgetCreate
+from app.utils.deps import get_current_user, require_permission
+from app.utils.audit import add_audit_log
 
 router = APIRouter()
 
@@ -21,7 +24,7 @@ async def list_budgets(
     account_id: Optional[int] = Query(None),
     company_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """List all GL budgets"""
     query = select(GLBudget).order_by(GLBudget.account_id)
@@ -40,34 +43,37 @@ async def list_budgets(
 
 @router.post("/")
 async def create_budget(
-    data: dict,
+    data: BudgetCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("MANAGE_BUDGETS")),
 ):
     """Create a new budget entry"""
     # Check if budget already exists for this account and period
     existing = await db.execute(
         select(GLBudget)
-        .where(GLBudget.account_id == data["account_id"])
-        .where(GLBudget.fiscal_period_id == data["fiscal_period_id"])
+        .where(GLBudget.account_id == data.account_id)
+        .where(GLBudget.fiscal_period_id == data.fiscal_period_id)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Budget already exists for this account and period")
 
     budget = GLBudget(
-        account_id=data["account_id"],
-        fiscal_period_id=data["fiscal_period_id"],
-        budget_amount=data["budget_amount"],
+        account_id=data.account_id,
+        fiscal_period_id=data.fiscal_period_id,
+        budget_amount=data.budget_amount,
         actual_amount=0.0,
-        variance=data["budget_amount"],
-        notes=data.get("notes"),
-        company_id=data.get("company_id"),
+        variance=data.budget_amount,
+        notes=data.notes,
+        company_id=data.company_id,
         status="DRAFT",
         created_at=datetime.now(),
     )
     db.add(budget)
     await db.commit()
     await db.refresh(budget)
+    await add_audit_log(db, "GLBudget", budget.id, "CREATE", current_user,
+                        {"account_id": budget.account_id, "amount": budget.budget_amount})
+    await db.commit()
     return {"id": budget.id, "message": "Budget created"}
 
 
@@ -76,7 +82,7 @@ async def update_budget(
     budget_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("MANAGE_BUDGETS")),
 ):
     """Update a budget entry"""
     result = await db.execute(select(GLBudget).where(GLBudget.id == budget_id))
@@ -98,7 +104,7 @@ async def update_budget(
 async def approve_budget(
     budget_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("MANAGE_BUDGETS")),
 ):
     """Approve a budget"""
     result = await db.execute(select(GLBudget).where(GLBudget.id == budget_id))
@@ -110,6 +116,10 @@ async def approve_budget(
     budget.approved_by = current_user.id if hasattr(current_user, "id") else None
     budget.approved_at = datetime.now()
     await db.commit()
+    await db.refresh(budget)
+    await add_audit_log(db, "GLBudget", budget.id, "APPROVE", current_user,
+                        {"account_id": budget.account_id, "amount": budget.budget_amount})
+    await db.commit()
     return {"success": True, "message": "Budget approved"}
 
 
@@ -118,7 +128,7 @@ async def get_budget_vs_actual(
     fiscal_period_id: int = Query(...),
     company_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """
     Compare budget vs actual amounts for a fiscal period.
@@ -143,7 +153,7 @@ async def get_budget_vs_actual(
     for budget in budgets:
         # Get actual amount from journal entries
         actual_conditions = [
-            JournalEntry.status == "Posted",
+            JournalEntry.status.in_(_LEDGER_STATUSES),
             JournalEntry.entry_date >= period.start_date,
             JournalEntry.entry_date <= period.end_date,
         ]
@@ -170,7 +180,7 @@ async def get_budget_vs_actual(
 
         # For expense accounts, actual = debits - credits
         # For revenue accounts, actual = credits - debits
-        if account and account.account_type == "Revenue":
+        if account and account.account_type == "revenue":
             actual_amount = total_credit - total_debit
         else:
             actual_amount = total_debit - total_credit
@@ -203,7 +213,7 @@ async def get_budget_alerts(
     threshold_percent: float = Query(80.0),
     company_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """
     Get budget alerts where actual spending exceeds threshold % of budget.
@@ -235,7 +245,7 @@ async def get_budget_alerts(
     for budget in budgets:
         # Get actual amount
         actual_conditions = [
-            JournalEntry.status == "Posted",
+            JournalEntry.status.in_(_LEDGER_STATUSES),
             JournalEntry.entry_date >= period.start_date,
             JournalEntry.entry_date <= period.end_date,
         ]
@@ -275,3 +285,23 @@ async def get_budget_alerts(
                 })
 
     return {"alerts": alerts, "threshold_percent": threshold_percent}
+
+
+@router.post("/{budget_id}/reject")
+async def reject_budget(budget_id: int, data: dict = {}, db: AsyncSession = Depends(get_db), current_user=Depends(require_permission("MANAGE_BUDGETS"))):
+    from app.models.budget import GLBudget
+    result = await db.execute(select(GLBudget).where(GLBudget.id == budget_id))
+    budget = result.scalar_one_or_none()
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    if budget.status == "APPROVED":
+        raise HTTPException(status_code=400, detail="Cannot reject an approved budget")
+    from sqlalchemy import update as sql_update
+    await db.execute(sql_update(GLBudget).where(GLBudget.id == budget_id).values(
+        status="REJECTED", approved_by=current_user.id, approved_at=datetime.now(UTC).replace(tzinfo=None),
+        updated_at=datetime.now(UTC).replace(tzinfo=None),
+    ))
+    await add_audit_log(db, "GLBudget", budget_id, "REJECT", current_user,
+                        {"account_id": budget.account_id, "status": "REJECTED"})
+    await db.commit()
+    return {"message": "Budget rejected"}

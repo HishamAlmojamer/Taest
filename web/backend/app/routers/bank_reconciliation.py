@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.bank_reconciliation import BankReconciliation, BankReconciliationItem, BankStatementImport
 from app.models.payments import Bank, BankTransaction
-from app.utils.deps import get_current_active_user
+from app.utils.deps import get_current_user, require_permission
+from app.utils.validation import require_fields, parse_date_value
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ async def list_reconciliations(
     bank_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """List all bank reconciliations"""
     query = select(BankReconciliation).order_by(BankReconciliation.created_at.desc())
@@ -30,19 +31,21 @@ async def list_reconciliations(
         query = query.where(BankReconciliation.status == status)
     result = await db.execute(query)
     reconciliations = result.scalars().all()
-    return [{"id": r.id, "bank_id": r.bank_id, "reconciliation_date": str(r.reconciliation_date),
-             "statement_date": str(r.statement_date) if r.statement_date else None,
-             "statement_balance": r.statement_balance, "book_balance": r.book_balance,
-             "difference": r.difference, "status": r.status, "notes": r.notes} for r in reconciliations]
+    return [{"id": r.id, "bankId": r.bank_id, "reconciliationDate": str(r.reconciliation_date),
+             "statementDate": str(r.statement_date) if r.statement_date else None,
+             "statementBalance": float(r.statement_balance), "bookBalance": float(r.book_balance),
+             "difference": float(r.difference), "status": r.status, "notes": r.notes,
+             "createdAt": str(r.created_at) if r.created_at else None} for r in reconciliations]
 
 
 @router.post("/reconciliations")
 async def create_reconciliation(
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("RECONCILE_BANK")),
 ):
     """Create a new bank reconciliation"""
+    require_fields(data, ["bank_id"])
     # Get current bank balance
     bank_result = await db.execute(select(Bank).where(Bank.id == data["bank_id"]))
     bank = bank_result.scalar_one_or_none()
@@ -52,7 +55,7 @@ async def create_reconciliation(
     reconciliation = BankReconciliation(
         bank_id=data["bank_id"],
         reconciliation_date=datetime.now(),
-        statement_date=datetime.fromisoformat(data["statement_date"]) if isinstance(data.get("statement_date"), str) else data.get("statement_date"),
+        statement_date=parse_date_value(data.get("statement_date"), "statement_date") or datetime.now(),
         statement_balance=data.get("statement_balance", 0.0),
         book_balance=bank.current_balance or 0.0,
         difference=data.get("statement_balance", 0.0) - (bank.current_balance or 0.0),
@@ -71,7 +74,7 @@ async def create_reconciliation(
 async def get_reconciliation(
     reconciliation_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """Get a specific reconciliation with its items"""
     result = await db.execute(select(BankReconciliation).where(BankReconciliation.id == reconciliation_id))
@@ -91,14 +94,16 @@ async def get_reconciliation(
         "bank_id": reconciliation.bank_id,
         "reconciliation_date": str(reconciliation.reconciliation_date),
         "statement_date": str(reconciliation.statement_date) if reconciliation.statement_date else None,
-        "statement_balance": reconciliation.statement_balance,
-        "book_balance": reconciliation.book_balance,
-        "difference": reconciliation.difference,
+        "statement_balance": float(reconciliation.statement_balance),
+        "book_balance": float(reconciliation.book_balance),
+        "difference": float(reconciliation.difference),
         "status": reconciliation.status,
         "notes": reconciliation.notes,
         "items": [{"id": i.id, "bank_transaction_id": i.bank_transaction_id,
-                   "journal_entry_id": i.journal_entry_id, "amount": i.amount,
-                   "description": i.description, "reconciled": i.reconciled} for i in items],
+                   "journal_entry_id": i.journal_entry_id, "amount": float(i.amount),
+                   "description": i.description, "reconciled": i.reconciled,
+                   "status": "MATCHED" if i.reconciled else "UNMATCHED",
+                   "transaction_date": str(i.reconciled_at) if i.reconciled_at else None} for i in items],
     }
 
 
@@ -106,7 +111,7 @@ async def get_reconciliation(
 async def get_unmatched_transactions(
     reconciliation_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """Get unmatched bank transactions for reconciliation"""
     # Get reconciliation
@@ -136,7 +141,8 @@ async def get_unmatched_transactions(
 
     return [{"id": t.id, "transaction_type": t.transaction_type, "amount": t.amount,
              "transaction_date": str(t.transaction_date), "description": t.description,
-             "reference_number": t.reference_number, "reconciled": t.reconciled} for t in transactions]
+             "reference_number": t.reference_number, "reconciled": t.reconciled,
+             "journal_entry_id": t.journal_entry_id} for t in transactions]
 
 
 @router.post("/reconciliations/{reconciliation_id}/match")
@@ -144,7 +150,7 @@ async def match_transactions(
     reconciliation_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("RECONCILE_BANK")),
 ):
     """
     Match a bank transaction with a journal entry.
@@ -187,8 +193,12 @@ async def match_transactions(
         .values(reconciled=True, reconciliation_date=datetime.now())
     )
 
-    # Update book balance
-    reconciliation.book_balance += data["amount"]
+    # Update book balance: DEPOSIT adds, WITHDRAWAL subtracts
+    txn_type = data.get("transaction_type", "DEPOSIT")
+    if txn_type == "WITHDRAWAL":
+        reconciliation.book_balance -= data["amount"]
+    else:
+        reconciliation.book_balance += data["amount"]
     reconciliation.difference = reconciliation.statement_balance - reconciliation.book_balance
 
     await db.commit()
@@ -198,11 +208,15 @@ async def match_transactions(
 @router.post("/reconciliations/{reconciliation_id}/unmatch")
 async def unmatch_transaction(
     reconciliation_id: int,
-    item_id: int,
+    data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("RECONCILE_BANK")),
 ):
     """Unmatch a previously matched transaction"""
+    item_id = data.get("item_id")
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+
     # Get item
     item_result = await db.execute(
         select(BankReconciliationItem)
@@ -226,8 +240,16 @@ async def unmatch_transaction(
         .values(reconciled=False, reconciliation_date=None)
     )
 
-    # Update book balance
-    reconciliation.book_balance -= item.amount
+    # Get transaction type to reverse balance correctly
+    txn_result = await db.execute(select(BankTransaction).where(BankTransaction.id == item.bank_transaction_id))
+    txn = txn_result.scalar_one_or_none()
+    txn_type = txn.transaction_type if txn else "DEPOSIT"
+
+    # Reverse book balance: DEPOSIT was added, so subtract; WITHDRAWAL was subtracted, so add
+    if txn_type == "WITHDRAWAL":
+        reconciliation.book_balance += item.amount
+    else:
+        reconciliation.book_balance -= item.amount
     reconciliation.difference = reconciliation.statement_balance - reconciliation.book_balance
 
     # Delete the match item
@@ -240,7 +262,7 @@ async def unmatch_transaction(
 async def complete_reconciliation(
     reconciliation_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_permission("RECONCILE_BANK")),
 ):
     """Complete a bank reconciliation"""
     result = await db.execute(select(BankReconciliation).where(BankReconciliation.id == reconciliation_id))
@@ -264,7 +286,7 @@ async def complete_reconciliation(
 async def get_unreconciled_transactions(
     bank_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_user),
 ):
     """Get all unreconciled transactions for a bank"""
     result = await db.execute(

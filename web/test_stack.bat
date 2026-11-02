@@ -2,7 +2,7 @@
 REM Test full stack through frontend proxy
 
 REM Login and get token
-for /f "tokens=*" %%i in ('curl -s -X POST "http://localhost:5173/api/auth/login" -H "Content-Type: application/json" -d @C:\Users\hicom\Desktop\Taest\web\login_test.json') do set LOGIN_RESP=%%i
+for /f "tokens=*" %%i in ('curl -s -X POST "http://localhost:5173/api/auth/login" -H "Content-Type: application/json" -d @%~dp0login_test.json') do set LOGIN_RESP=%%i
 
 REM Extract token using powershell
 for /f %%i in ('powershell -Command "('%LOGIN_RESP%' | ConvertFrom-Json).access_token"') do set TOKEN=%%i

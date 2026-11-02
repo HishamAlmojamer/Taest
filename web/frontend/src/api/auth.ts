@@ -1,7 +1,12 @@
 import { post, get, put } from './client';
+import type { LoginContext } from '@/types';
 
-export async function login(data: { username: string; password: string }) {
+export async function login(data: { username: string; password: string; fiscalYearId?: number; branchId?: number }) {
   return await post('/auth/login', data);
+}
+
+export async function getLoginContext() {
+  return await get<LoginContext>('/auth/context');
 }
 
 export async function refreshToken(token: string) {

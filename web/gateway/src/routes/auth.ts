@@ -1,7 +1,5 @@
 import { Router, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import { authenticate } from '../middleware/auth';
 import { authLimiter } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import { z } from 'zod';
@@ -14,8 +12,31 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-const refreshSchema = z.object({
-  refreshToken: z.string().min(1),
+// Accept both camelCase (frontend) and snake_case (backend/FastAPI) payloads.
+const refreshSchema = z
+  .object({
+    refreshToken: z.string().min(1).optional(),
+    refresh_token: z.string().min(1).optional(),
+  })
+  .refine((v) => Boolean(v.refreshToken || v.refresh_token), {
+    message: 'refreshToken is required',
+  });
+
+router.get('/context', async (_req: Request, res: Response) => {
+  try {
+    const backendRes = await fetch(`${config.pythonBackendUrl}/api/auth/context`);
+
+    if (!backendRes.ok) {
+      const errData: any = await backendRes.json().catch(() => ({}));
+      res.status(backendRes.status).json({ error: errData.detail || 'Failed to load login context' });
+      return;
+    }
+
+    res.json(await backendRes.json());
+  } catch (err: any) {
+    logger.error(`Login context error: ${err.message}`);
+    res.status(502).json({ error: 'Authentication service unavailable' });
+  }
 });
 
 router.post('/login', authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
@@ -36,20 +57,12 @@ router.post('/login', authLimiter, validate(loginSchema), async (req: Request, r
 
     const backendData: any = await backendRes.json();
 
-    const user = backendData.user || backendData;
-
     logger.info(`User ${username} logged in successfully`);
 
     res.json({
       accessToken: backendData.access_token,
       refreshToken: backendData.refresh_token || '',
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        permissions: user.permissions || [],
-      },
+      user: backendData.user || {},
     });
   } catch (err: any) {
     logger.error(`Login error: ${err.message}`);
@@ -61,79 +74,82 @@ router.post('/login', authLimiter, validate(loginSchema), async (req: Request, r
   }
 });
 
-router.post('/refresh', validate(refreshSchema), (req: Request, res: Response) => {
+router.post('/refresh', validate(refreshSchema), async (req: Request, res: Response) => {
+  // Refresh MUST go through the backend: it owns token rotation and the
+  // server-side registry used for revocation. Signing a new token here would
+  // bypass both (and keep a stolen token usable).
+  const refreshToken = req.body.refreshToken || req.body.refresh_token;
+
   try {
-    const { refreshToken } = req.body;
+    const backendRes = await fetch(`${config.pythonBackendUrl}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
 
-    const decoded = jwt.verify(refreshToken, config.jwtSecret, {
-      algorithms: [config.jwtAlgorithm as jwt.Algorithm],
-    }) as { id: number; type: string };
+    const data: any = await backendRes.json().catch(() => ({}));
 
-    if (decoded.type !== 'refresh') {
-      res.status(401).json({ error: 'Invalid token type' });
+    if (!backendRes.ok) {
+      res.status(backendRes.status).json({ error: data.detail || 'Invalid refresh token' });
       return;
     }
 
-    const accessToken = jwt.sign(
-      { id: decoded.id, tokenType: 'access' },
-      config.jwtSecret,
-      { algorithm: config.jwtAlgorithm as jwt.Algorithm, expiresIn: '1h' }
-    );
-
-    const newRefreshToken = jwt.sign(
-      { id: decoded.id, type: 'refresh' },
-      config.jwtSecret,
-      { algorithm: config.jwtAlgorithm as jwt.Algorithm, expiresIn: '7d' }
-    );
-
-    res.json({ accessToken, refreshToken: newRefreshToken });
+    res.json({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      user: data.user,
+    });
   } catch (err: any) {
-    if (err.name === 'TokenExpiredError') {
-      res.status(401).json({ error: 'Refresh token expired' });
-      return;
-    }
-    res.status(401).json({ error: 'Invalid refresh token' });
+    logger.error(`Refresh error: ${err.message}`);
+    res.status(502).json({ error: 'Authentication service unavailable' });
   }
 });
 
 router.get('/me', async (req: Request, res: Response) => {
   try {
-    const backendRes = await fetch(`${config.pythonBackendUrl}/api/auth/me`, {
-      headers: { Authorization: req.headers.authorization || '' },
-    });
-
-    if (!backendRes.ok) {
-      res.status(backendRes.status).json({ error: 'Failed to fetch user info' });
-      return;
-    }
-
-    const userData = await backendRes.json();
-    res.json(userData);
-  } catch {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const resp = await fetch(`${config.pythonBackendUrl}/api/auth/me`, {
+
+    const backendRes = await fetch(`${config.pythonBackendUrl}/api/auth/me`, {
       headers: { Authorization: authHeader },
     });
-    if (!resp.ok) { res.status(401).json({ error: 'Invalid token' }); return; }
-    res.json(await resp.json());
+
+    if (!backendRes.ok) {
+      const errData: any = await backendRes.json().catch(() => ({}));
+      res.status(backendRes.status).json({ error: errData.detail || 'Failed to fetch user info' });
+      return;
+    }
+
+    const userData = await backendRes.json();
+    res.json(userData);
+  } catch (err: any) {
+    logger.error(`Get user error: ${err.message}`);
+    if (err.cause?.code === 'ECONNREFUSED') {
+      res.status(502).json({ error: 'Authentication service unavailable' });
+      return;
+    }
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 router.post('/logout', async (req: Request, res: Response) => {
+  const refreshToken = req.body?.refreshToken || req.body?.refresh_token;
   try {
-    await fetch(`${config.pythonBackendUrl}/api/auth/logout`, {
-      method: 'POST',
-      headers: { Authorization: req.headers.authorization || '' },
-    });
+    if (refreshToken) {
+      await fetch(`${config.pythonBackendUrl}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    }
   } catch {
-    // Logout even if backend is down
+    // Logout is best effort: the client clears its session regardless.
   }
 
-  logger.info(`User ${req.user?.username} logged out`);
+  logger.info('User logged out');
   res.json({ message: 'Logged out successfully' });
 });
 

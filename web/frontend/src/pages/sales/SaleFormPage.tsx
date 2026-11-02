@@ -6,12 +6,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createSale } from '@/api/sales';
 import { getCustomers } from '@/api/crm';
 import { getProducts } from '@/api/inventory';
+import { getTaxRates } from '@/api/taxes';
+import { useAuthStore } from '@/stores/authStore';
 import { FormActions } from '@/components/ui/FormActions';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useToast } from '@/components/ui/Toast';
 
 const saleSchema = z.object({
   customerId: z.string().min(1, 'العميل مطلوب'),
   date: z.string().min(1, 'التاريخ مطلوب'),
   dueDate: z.string().min(1, 'تاريخ الاستحقاق مطلوب'),
+  paymentMethod: z.string().min(1, 'طريقة الدفع مطلوبة'),
   notes: z.string().optional(),
   items: z.array(z.object({
     productId: z.string().min(1, 'المنتج مطلوب'),
@@ -27,6 +32,8 @@ type SaleForm = z.infer<typeof saleSchema>;
 export default function SaleFormPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { branchId, fiscalYearId, user } = useAuthStore();
+  const toast = useToast();
 
   const { data: customersData } = useQuery({
     queryKey: ['customers-select'],
@@ -38,12 +45,25 @@ export default function SaleFormPage() {
     queryFn: () => getProducts({ page: 1, pageSize: 1000 }),
   });
 
+  const { data: taxRates } = useQuery({
+    queryKey: ['tax-rates'],
+    queryFn: () => getTaxRates(),
+  });
+
+  const activeTax = (taxRates || []).find(
+    (t: any) => t.isActive && t.rate > 0 && (!t.appliesTo || t.appliesTo === 'SALES' || t.appliesTo === 'BOTH')
+  );
+  const taxRatePercent = activeTax ? Number(activeTax.rate) : 15;
+  const taxLabel = activeTax ? (activeTax.nameAr || activeTax.name || 'الضريبة') : 'الضريبة (15%)';
+
   const mutation = useMutation({
     mutationFn: createSale,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      toast.success('تم إنشاء الفاتورة بنجاح');
       navigate('/sales');
     },
+    onError: (e: any) => toast.error('خطأ: ' + (e?.response?.data?.detail || e.message)),
   });
 
   const { register, handleSubmit, control, watch, formState: { errors } } = useForm<SaleForm>({
@@ -80,23 +100,25 @@ export default function SaleFormPage() {
     (sum, item) => sum + (item.quantity || 0) * (item.unitPrice || 0) - (item.discount || 0),
     0
   );
-  const taxAmount = subtotal * 0.15;
+  const taxAmount = subtotal * (taxRatePercent / 100);
   const total = subtotal + taxAmount;
 
   const onSubmit = (data: SaleForm) => {
     const totalAmount = subtotal;
     const finalAmount = total;
+    const paymentMethod = data.paymentMethod || 'cash';
     mutation.mutate({
       customerId: data.customerId ? Number(data.customerId) : null,
       totalAmount,
       discount: data.items.reduce((sum, item) => sum + (item.discount || 0), 0),
       finalAmount,
-      paymentMethod: 'cash',
-      paymentStatus: 'paid',
-      companyId: 1,
-      branchId: 1,
-      invoiceNumber: `INV-${Date.now()}`,
+      paymentMethod,
+      paymentStatus: paymentMethod === 'credit' ? 'unpaid' : 'paid',
+      companyId: Number(user?.companyId || 1),
+      branchId: branchId ?? 1,
+      fiscalPeriodId: fiscalYearId,
       taxAmount,
+      taxId: activeTax ? activeTax.id : undefined,
       notes: data.notes,
       items: data.items.map((item) => ({
         productId: Number(item.productId),
@@ -109,10 +131,11 @@ export default function SaleFormPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-zinc-100">فاتورة مبيعات جديدة</h1>
-        <button onClick={() => navigate('/sales')} className="btn-secondary">رجوع</button>
-      </div>
+      <PageHeader
+        title="فاتورة مبيعات جديدة"
+        icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
+        actions={<button onClick={() => navigate('/sales')} className="btn-secondary">رجوع</button>}
+      />
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         <div className="card">
@@ -136,6 +159,17 @@ export default function SaleFormPage() {
               <label className="label">تاريخ الاستحقاق</label>
               <input {...register('dueDate')} type="date" className="input" />
               {errors.dueDate && <p className="text-xs text-red-600 mt-1">{errors.dueDate.message}</p>}
+            </div>
+            <div>
+              <label className="label">طريقة الدفع</label>
+              <select {...register('paymentMethod')} className="input">
+                <option value="cash">نقدي</option>
+                <option value="credit">آجل</option>
+                <option value="bank_transfer">تحويل بنكي</option>
+                <option value="check">شيك</option>
+                <option value="card">بطاقة</option>
+              </select>
+              {errors.paymentMethod && <p className="text-xs text-red-600 mt-1">{errors.paymentMethod.message}</p>}
             </div>
           </div>
           <div className="mt-4">
@@ -230,7 +264,7 @@ export default function SaleFormPage() {
                 <span>{subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500 dark:text-zinc-400">الضريبة (15%)</span>
+                <span className="text-gray-500 dark:text-zinc-400">{taxLabel} ({taxRatePercent}%)</span>
                 <span>{taxAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-base font-bold border-t border-gray-200 dark:border-zinc-700 pt-2">

@@ -1,5 +1,5 @@
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.models.projects import (
 )
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginationResponse
-from app.utils.deps import get_current_user
+from app.utils.deps import get_current_user, require_permission
 
 router = APIRouter()
 
@@ -73,7 +73,7 @@ async def get_project(project_id: int, db: AsyncSession = Depends(get_db), curre
 
 
 @router.post("", response_model=dict)
-async def create_project(data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_project(data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     if not data.get("name_ar"):
         raise HTTPException(status_code=400, detail="Project name (name_ar) is required")
     count = (await db.execute(select(func.count(Project.id)))).scalar() or 0
@@ -87,7 +87,8 @@ async def create_project(data: dict, db: AsyncSession = Depends(get_db), current
         status=data.get("status", "planned"), priority=data.get("priority", "medium"),
         budget_amount=float(data.get("budget_amount", 0)),
         currency=data.get("currency", "YER"), notes=data.get("notes"),
-        created_by=current_user.id, created_at=datetime.utcnow(),
+        created_by=current_user.id, created_at=datetime.now(UTC).replace(tzinfo=None),
+        is_active=True,
     )
     db.add(project)
     await db.flush()
@@ -95,7 +96,7 @@ async def create_project(data: dict, db: AsyncSession = Depends(get_db), current
 
 
 @router.put("/{project_id}", response_model=dict)
-async def update_project(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_project(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     result = await db.execute(select(Project).where(Project.id == project_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
@@ -108,7 +109,7 @@ async def update_project(project_id: int, data: dict, db: AsyncSession = Depends
 
 
 @router.delete("/{project_id}", response_model=MessageResponse)
-async def delete_project(project_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def delete_project(project_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     await db.execute(update(Project).where(Project.id == project_id).values(is_active=False))
     return MessageResponse(message="Project deleted")
 
@@ -157,7 +158,7 @@ async def list_tasks(project_id: int, db: AsyncSession = Depends(get_db), curren
 
 
 @router.post("/{project_id}/tasks", response_model=dict)
-async def create_task(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_task(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     if not data.get("name_ar"):
         raise HTTPException(status_code=400, detail="Task name (name_ar) is required")
     task = ProjectTask(
@@ -170,7 +171,8 @@ async def create_task(project_id: int, data: dict, db: AsyncSession = Depends(ge
         status=data.get("status", "pending"), priority=data.get("priority", "medium"),
         cost_estimate=float(data.get("cost_estimate", 0)),
         notes=data.get("notes"), created_by=current_user.id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        is_active=True,
     )
     db.add(task)
     await db.flush()
@@ -178,7 +180,7 @@ async def create_task(project_id: int, data: dict, db: AsyncSession = Depends(ge
 
 
 @router.put("/tasks/{task_id}", response_model=dict)
-async def update_task(task_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_task(task_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     result = await db.execute(select(ProjectTask).where(ProjectTask.id == task_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Task not found")
@@ -192,7 +194,7 @@ async def update_task(task_id: int, data: dict, db: AsyncSession = Depends(get_d
 
 
 @router.delete("/tasks/{task_id}", response_model=MessageResponse)
-async def delete_task(task_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def delete_task(task_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     await db.execute(update(ProjectTask).where(ProjectTask.id == task_id).values(is_active=False))
     return MessageResponse(message="Task deleted")
 
@@ -211,14 +213,14 @@ async def list_milestones(project_id: int, db: AsyncSession = Depends(get_db), c
 
 
 @router.post("/{project_id}/milestones", response_model=dict)
-async def create_milestone(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_milestone(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     if not data.get("name"):
         raise HTTPException(status_code=400, detail="Milestone name is required")
     milestone = ProjectMilestone(
         project_id=project_id, name=data["name"],
         description=data.get("description"), due_date=data.get("due_date"),
         status=data.get("status", "pending"),
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     db.add(milestone)
     await db.flush()
@@ -226,7 +228,7 @@ async def create_milestone(project_id: int, data: dict, db: AsyncSession = Depen
 
 
 @router.put("/milestones/{milestone_id}", response_model=dict)
-async def update_milestone(milestone_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_milestone(milestone_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     result = await db.execute(select(ProjectMilestone).where(ProjectMilestone.id == milestone_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Milestone not found")
@@ -251,7 +253,7 @@ async def list_resources(project_id: int, db: AsyncSession = Depends(get_db), cu
 
 
 @router.post("/{project_id}/resources", response_model=dict)
-async def create_resource(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_resource(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     qty = float(data.get("qty", 1))
     unit_cost = float(data.get("unit_cost", 0))
     resource = ProjectResource(
@@ -260,7 +262,7 @@ async def create_resource(project_id: int, data: dict, db: AsyncSession = Depend
         resource_id=data.get("resource_id"), qty=qty,
         unit_cost=unit_cost, total_cost=qty * unit_cost,
         start_date=data.get("start_date"), end_date=data.get("end_date"),
-        notes=data.get("notes"), created_at=datetime.utcnow(),
+        notes=data.get("notes"), created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     db.add(resource)
     await db.flush()
@@ -282,12 +284,12 @@ async def list_budget(project_id: int, db: AsyncSession = Depends(get_db), curre
 
 
 @router.post("/{project_id}/budget", response_model=dict)
-async def create_budget(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_budget(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     budget = ProjectBudget(
         project_id=project_id, category=data.get("category", ""),
         description=data.get("description"),
         budget_amount=float(data.get("budget_amount", 0)),
-        notes=data.get("notes"), created_at=datetime.utcnow(),
+        notes=data.get("notes"), created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     db.add(budget)
     await db.flush()
@@ -310,7 +312,7 @@ async def list_expenses(project_id: int, db: AsyncSession = Depends(get_db), cur
 
 
 @router.post("/{project_id}/expenses", response_model=dict)
-async def create_expense(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_expense(project_id: int, data: dict, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_permission("MANAGE_PROJECTS"))):
     expense = ProjectExpense(
         project_id=project_id, task_id=data.get("task_id"),
         budget_id=data.get("budget_id"),
@@ -320,7 +322,7 @@ async def create_expense(project_id: int, data: dict, db: AsyncSession = Depends
         expense_date=data.get("expense_date"),
         receipt_ref=data.get("receipt_ref"),
         notes=data.get("notes"), created_by=current_user.id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     db.add(expense)
 

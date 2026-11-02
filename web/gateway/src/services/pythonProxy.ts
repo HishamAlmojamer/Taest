@@ -11,6 +11,14 @@ export function createBackendProxy() {
       logger.debug(`Proxying ${req.method} ${fullPath} -> ${targetUrl}${fullPath}`);
       return fullPath;
     },
+    // Strip hop-by-hop headers that break the outbound request
+    // (e.g. `Expect: 100-continue` from .NET clients makes uvicorn stall
+    // until the proxy errors out with a broken response).
+    proxyReqOptDecorator: (proxyReqOpts) => {
+      delete proxyReqOpts.headers?.['expect'];
+      delete proxyReqOpts.headers?.connection;
+      return proxyReqOpts;
+    },
     proxyErrorHandler: (err: any, res: Response, next: NextFunction) => {
       logger.error(`Proxy error: ${err.message}`);
       if (!res.headersSent) {

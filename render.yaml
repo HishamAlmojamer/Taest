@@ -1,0 +1,64 @@
+# Render Blueprint — free-tier topology.
+#
+# One free Docker web service runs all three tiers:
+#   gateway (public PORT) + FastAPI (127.0.0.1:8001) + built React SPA
+# plus one free Render PostgreSQL database.
+#
+# Free-plan caveats (verify current limits at https://render.com/pricing):
+#   - free web services sleep after inactivity (~50s cold start);
+#   - free PostgreSQL expires 30 days after creation. For a permanent free
+#     database use Neon (https://neon.tech) and set DATABASE_URL manually.
+#
+# Set BOOTSTRAP_ADMIN_PASSWORD when creating the Blueprint (dashboard prompt).
+# The password is stored only in Render, never in this repository.
+
+envVarGroups:
+  - name: erp-shared
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: TZ
+        value: Asia/Riyadh
+      # Optional cache; disabled so no paid/free Redis add-on is required.
+      - key: CACHE_ENABLED
+        value: "false"
+      # Same-origin deployment; update if a custom domain is used.
+      - key: CORS_ORIGINS
+        value: https://erp-web.onrender.com
+
+services:
+  - type: web
+    name: erp-web
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./web/Dockerfile.render
+    dockerContext: ./web
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - fromGroup: erp-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: erp-db
+          property: connectionString
+      - key: PYTHON_BACKEND_URL
+        value: http://127.0.0.1:8001
+      - key: SERVE_FRONTEND_DIR
+        value: /app/public
+      - key: BOOTSTRAP_ADMIN_USERNAME
+        value: admin
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_ADMIN_FULL_NAME
+        value: System Administrator
+
+databases:
+  - name: erp-db
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: "16"

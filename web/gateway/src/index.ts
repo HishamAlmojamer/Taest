@@ -4,10 +4,13 @@ dotenv.config();
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 import { createServer } from 'http';
 import { config } from './config';
 import { apiLimiter } from './middleware/rateLimit';
 import { authenticate } from './middleware/auth';
+import { authorize } from './middleware/rbac';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './services/logger';
 import { createWsProxy } from './services/wsProxy';
@@ -20,15 +23,36 @@ import { createBackendProxy } from './services/pythonProxy';
 // =============================================================================
 import { initializeCore, shutdownCore, getEventBus, withTransaction, getPool } from './core';
 import { EventType } from './core/events/types';
-import { PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
+
+function safeParseInt(value: string): number | undefined {
+  const n = parseInt(value, 10);
+  return isNaN(n) ? undefined : n;
+}
 
 const app = express();
 const server = createServer(app);
 
+// Render (and most PaaS providers) terminate TLS at their edge proxy.
+app.set('trust proxy', 1);
+
 // =============================================================================
 // Middleware
 // =============================================================================
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: ["'self'", 'ws:', 'wss:'],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+}));
 app.use(cors({
   origin: config.corsOrigins,
   credentials: true,
@@ -75,7 +99,7 @@ app.get('/health', async (_req, res) => {
  * Request body:
  *   { type: EventType, payload: EventPayloadMap[K], metadata?: {...} }
  */
-app.post('/api/ledger/emit', authenticate, async (req, res, next) => {
+app.post('/api/ledger/emit', authenticate, authorize('admin', 'manager'), async (req, res, next) => {
   try {
     const { type, payload, metadata } = req.body;
 
@@ -86,12 +110,45 @@ app.post('/api/ledger/emit', authenticate, async (req, res, next) => {
       });
     }
 
+    // Whitelist of known event types to prevent arbitrary/malicious emits.
+    const validEventTypes: EventType[] = [
+      'sales.invoice.approved',
+      'sales.invoice.voided',
+      'sales.return.approved',
+      'sales.return.voided',
+      'purchase.return.approved',
+      'purchase.return.voided',
+      'inventory.goods.received',
+      'inventory.goods.issued',
+      'payroll.approved',
+      'payroll.voided',
+      'payroll.settled',
+      'employee.advance.granted',
+      'employee.advance.repaid',
+      'employee.advance.voided',
+      'purchase.order.approved',
+      'purchase.order.voided',
+      'payment.received',
+      'payment.made',
+      'cheque.received',
+      'cheque.issued',
+      'cheque.deposited',
+      'cheque.cleared',
+      'cheque.returned',
+    ];
+    if (!validEventTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Unknown or disallowed event type: "${type}"`,
+      });
+    }
+
     const bus = getEventBus();
 
     // Execute within a database transaction for atomicity
     const result = await withTransaction(async (client: PoolClient) => {
-      await bus.emit(type as EventType, payload, client, metadata || {});
-      return { success: true, eventType: type };
+      const { correlationId, results } = await bus.emit(type as EventType, payload, client, metadata || {});
+      return { success: true, eventType: type, correlationId, results };
     });
 
     res.json({
@@ -112,12 +169,12 @@ app.post('/api/ledger/emit', authenticate, async (req, res, next) => {
  *   companyId? - Filter by company
  *   asOfDate?  - Date to calculate balances as of (ISO string)
  */
-app.get('/api/ledger/trial-balance', authenticate, async (req, res, next) => {
+app.get('/api/ledger/trial-balance', authenticate, authorize('admin', 'manager', 'viewer'), async (req, res, next) => {
   try {
     const { getTrialBalance } = await import('./core/ledger/JournalEntryService');
     const { withTransaction: wt } = await import('./core/database/DatabaseConnection');
 
-    const companyId = req.query.companyId ? parseInt(req.query.companyId as string) : undefined;
+    const companyId = req.query.companyId ? safeParseInt(req.query.companyId as string) : undefined;
     const asOfDate = req.query.asOfDate ? new Date(req.query.asOfDate as string) : undefined;
 
     const result = await wt(async (client: PoolClient) => {
@@ -146,7 +203,7 @@ app.get('/api/ledger/trial-balance', authenticate, async (req, res, next) => {
  * Create a new journal entry directly (without going through event bus).
  * Use this for manual journal entries or adjustments.
  */
-app.post('/api/ledger/journal-entries', authenticate, async (req, res, next) => {
+app.post('/api/ledger/journal-entries', authenticate, authorize('admin', 'manager'), async (req, res, next) => {
   try {
     const { postJournalEntry } = await import('./core/ledger/JournalEntryService');
     const { withTransaction: wt } = await import('./core/database/DatabaseConnection');
@@ -174,14 +231,17 @@ app.post('/api/ledger/journal-entries', authenticate, async (req, res, next) => 
  * POST /api/ledger/journal-entries/:id/void
  * Void a posted journal entry and create a reversing entry.
  */
-app.post('/api/ledger/journal-entries/:id/void', authenticate, async (req, res, next) => {
+app.post('/api/ledger/journal-entries/:id/void', authenticate, authorize('admin'), async (req, res, next) => {
   try {
     const { voidJournalEntry } = await import('./core/ledger/JournalEntryService');
     const { withTransaction: wt } = await import('./core/database/DatabaseConnection');
 
-    const entryId = parseInt(req.params.id as string);
+    const entryId = safeParseInt(req.params.id as string);
     const { reason } = req.body;
 
+    if (!entryId) {
+      return res.status(400).json({ success: false, message: 'Invalid entry ID' });
+    }
     if (!reason) {
       return res.status(400).json({
         success: false,
@@ -190,7 +250,7 @@ app.post('/api/ledger/journal-entries/:id/void', authenticate, async (req, res, 
     }
 
     const result = await wt(async (client: PoolClient) => {
-      return voidJournalEntry(entryId, reason, client);
+      return voidJournalEntry(entryId, reason, client, req.user?.id);
     });
 
     res.json({
@@ -207,17 +267,17 @@ app.post('/api/ledger/journal-entries/:id/void', authenticate, async (req, res, 
  * GET /api/ledger/accounts
  * List all chart of accounts with balances.
  */
-app.get('/api/ledger/accounts', authenticate, async (req, res, next) => {
+app.get('/api/ledger/accounts', authenticate, authorize('admin', 'manager', 'viewer'), async (req, res, next) => {
   try {
     const { query: q } = await import('./core/database/DatabaseConnection');
 
     const result = await q(`
       SELECT
-        id, code, name, name_ar, type, parent_id,
-        is_active, opening_balance, currency_code, created_at
-      FROM chart_of_accounts
+        id, account_code AS code, account_name AS name, account_name_ar AS name_ar,
+        account_type AS type, parent_id, is_active, opening_balance, created_at
+      FROM accounts
       WHERE is_active = true
-      ORDER BY code ASC
+      ORDER BY account_code ASC
     `);
 
     res.json({
@@ -235,6 +295,23 @@ app.get('/api/ledger/accounts', authenticate, async (req, res, next) => {
 const proxy = createBackendProxy();
 app.use('/api/auth', authRouter);
 app.use('/api', proxy);
+
+// Optionally serve the built SPA from the same origin (single Render web
+// service). API/health/websocket paths are never handled by the SPA fallback.
+if (config.serveFrontendDir && fs.existsSync(path.join(config.serveFrontendDir, 'index.html'))) {
+  const frontendDir = config.serveFrontendDir;
+  logger.info(`Serving frontend from ${frontendDir}`);
+  app.use(express.static(frontendDir, { index: false, maxAge: '1h' }));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health' || req.path.startsWith('/ws')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDir, 'index.html'), (err) => {
+      if (err) next(err);
+    });
+  });
+}
+
 app.use(errorHandler);
 
 // =============================================================================

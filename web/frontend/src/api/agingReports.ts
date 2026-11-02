@@ -26,3 +26,9 @@ export async function getSupplierStatement(supplierId: number, startDate?: strin
   if (endDate) params.end_date = endDate;
   return await get<any>(`/aging-reports/supplier-statement/${supplierId}`, params);
 }
+
+export async function getDebtorsCreditors(asOfDate?: string) {
+  const params: Record<string, any> = {};
+  if (asOfDate) params.as_of_date = asOfDate;
+  return await get<any>('/aging-reports/debtors-creditors', params);
+}

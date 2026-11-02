@@ -6,6 +6,11 @@ __pycache__/
 dist/
 build/
 *.egg
+.venv/
+venv/
+env/
+ENV/
+*.pyc
 
 # Node
 node_modules/
@@ -37,6 +42,17 @@ pgdata/
 # Logs
 logs/
 *.log
+*.out
+*.err
+server.out
+server.err
+server.log.err
+
+# Runtime service state
+web/backend/service.pid
+web/backend/watchdog.state
+web/backend/service.log
+web/backend/service.log.*
 
 # OS
 .DS_Store
@@ -52,4 +68,15 @@ htmlcov/
 
 # Cache
 .cache/
-*.pyc
+
+# Vite temp files
+vite.config.ts.timestamp-*.mjs
+web/frontend/vite.config.ts.timestamp-*.mjs
+
+# TS check output artifacts
+ts_check*.txt
+tsc_check*.txt
+
+# Web junk / test artifacts
+web/login_test.json
+web/FastAPI

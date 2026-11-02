@@ -7,8 +7,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createPurchase } from '@/api/purchases';
 import { getSuppliers } from '@/api/crm';
 import { getProducts } from '@/api/inventory';
+import { getTaxRates } from '@/api/taxes';
+import { useAuthStore } from '@/stores/authStore';
 import { FormActions } from '@/components/ui/FormActions';
 import { FormSummary } from '@/components/ui/FormSummary';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useToast } from '@/components/ui/Toast';
 
 const purchaseSchema = z.object({
   supplierId: z.string().min(1, 'المورد مطلوب'),
@@ -22,7 +26,9 @@ type PurchaseForm = z.infer<typeof purchaseSchema>;
 export default function PurchaseFormPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { branchId, fiscalYearId, user } = useAuthStore();
   const [items, setItems] = useState<{ productId: string; quantity: number; unitCost: number; discount: number }[]>([]);
+  const toast = useToast();
 
   const { data: suppliersData } = useQuery({
     queryKey: ['suppliers-select'],
@@ -34,12 +40,24 @@ export default function PurchaseFormPage() {
     queryFn: () => getProducts({ page: 1, pageSize: 1000 }),
   });
 
+  const { data: taxRates } = useQuery({
+    queryKey: ['tax-rates'],
+    queryFn: () => getTaxRates(),
+  });
+
+  const activeTax = (taxRates || []).find(
+    (t: any) => t.isActive && t.rate > 0 && (!t.appliesTo || t.appliesTo === 'PURCHASES' || t.appliesTo === 'BOTH')
+  );
+  const taxRatePercent = activeTax ? Number(activeTax.rate) : 15;
+
   const mutation = useMutation({
     mutationFn: createPurchase,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] });
+      toast.success('تم إنشاء أمر الشراء بنجاح');
       navigate('/purchases');
     },
+    onError: (e: any) => toast.error('خطأ: ' + (e?.response?.data?.detail || e.message)),
   });
 
   const { register, handleSubmit, formState: { errors } } = useForm<PurchaseForm>({
@@ -54,40 +72,45 @@ export default function PurchaseFormPage() {
     (u[i] as Record<string, unknown>)[field] = val;
     if (field === 'productId') {
       const p = productsData?.items?.find((pr: any) => pr.id === val);
-      if (p) u[i].unitCost = p.costPrice;
+      if (p) u[i].unitCost = p.purchasePrice;
     }
     setItems(u);
   };
 
   const subtotal = items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
-  const taxAmount = subtotal * 0.15;
+  const taxAmount = subtotal * (taxRatePercent / 100);
   const totalDiscount = items.reduce((s, i) => s + (i.discount || 0), 0);
   const total = subtotal + taxAmount - totalDiscount;
 
+  const buildPayload = (supplierId: string | undefined, dueDate: string | undefined, notes: string | undefined) => ({
+    supplierId: supplierId ? Number(supplierId) : null,
+    totalAmount: subtotal,
+    discount: totalDiscount,
+    finalAmount: total,
+    paymentStatus: 'pending',
+    companyId: Number(user?.companyId || 1),
+    branchId: branchId ?? 1,
+    fiscalPeriodId: fiscalYearId,
+    dueDate: dueDate || undefined,
+    taxAmount,
+    taxId: activeTax ? activeTax.id : undefined,
+    notes,
+    items: items.map((item) => ({
+      productId: Number(item.productId),
+      quantity: item.quantity,
+      unitPrice: item.unitCost,
+      totalPrice: item.quantity * item.unitCost,
+    })),
+  } as never);
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-zinc-100">أمر شراء جديد</h1>
-        <button onClick={() => navigate('/purchases')} className="btn-secondary">رجوع</button>
-      </div>
-      <form onSubmit={handleSubmit((d) => mutation.mutate({
-        supplierId: d.supplierId ? Number(d.supplierId) : null,
-        totalAmount: subtotal,
-        discount: totalDiscount,
-        finalAmount: total,
-        paymentStatus: 'pending',
-        companyId: 1,
-        branchId: 1,
-        invoiceNumber: `PO-${Date.now()}`,
-        taxAmount,
-        notes: d.notes,
-        items: items.map((item) => ({
-          productId: Number(item.productId),
-          quantity: item.quantity,
-          unitPrice: item.unitCost,
-          totalPrice: item.quantity * item.unitCost,
-        })),
-      } as never))} className="space-y-6">
+      <PageHeader
+        title="أمر شراء جديد"
+        icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>}
+        actions={<button onClick={() => navigate('/purchases')} className="btn-secondary">رجوع</button>}
+      />
+      <form onSubmit={handleSubmit((d) => mutation.mutate(buildPayload(d.supplierId, d.dueDate, d.notes)))} className="space-y-6">
         <div className="card">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
@@ -141,29 +164,12 @@ export default function PurchaseFormPage() {
           <div className="flex justify-end mt-6">
             <div className="w-72 space-y-2">
               <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-zinc-400">المجموع</span><span>{subtotal.toFixed(2)}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-zinc-400">الضريبة (15%)</span><span>{taxAmount.toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-gray-500 dark:text-zinc-400">الضريبة ({taxRatePercent}%)</span><span>{taxAmount.toFixed(2)}</span></div>
               <div className="flex justify-between text-base font-bold border-t border-gray-200 dark:border-zinc-700 pt-2"><span>الإجمالي</span><span className="text-primary-600">{total.toFixed(2)}</span></div>
             </div>
           </div>
         </div>
-        <FormActions onSave={handleSubmit((d) => mutation.mutate({
-          supplierId: d.supplierId ? Number(d.supplierId) : null,
-          totalAmount: subtotal,
-          discount: totalDiscount,
-          finalAmount: total,
-          paymentStatus: 'pending',
-          companyId: 1,
-          branchId: 1,
-          invoiceNumber: `PO-${Date.now()}`,
-          taxAmount,
-          notes: d.notes,
-          items: items.map((item) => ({
-            productId: Number(item.productId),
-            quantity: item.quantity,
-            unitPrice: item.unitCost,
-            totalPrice: item.quantity * item.unitCost,
-          })),
-        } as never))} onCancel={() => navigate('/purchases')} isSubmitting={mutation.isPending} />
+        <FormActions onSave={handleSubmit((d) => mutation.mutate(buildPayload(d.supplierId, d.dueDate, d.notes)))} onCancel={() => navigate('/purchases')} isSubmitting={mutation.isPending} />
       </form>
     </div>
   );

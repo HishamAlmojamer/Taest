@@ -7,6 +7,9 @@ export interface DailyReportData {
   totalCustomers: number;
   salesByHour: { hour: number; amount: number }[];
   recentSales: Sale[];
+  paymentMethods: { name: string; value: number }[];
+  approvalPending: number;
+  vsYesterday?: { sales: number; invoices: number; customers: number } | null;
 }
 
 export async function getDailyReport(date: string) {

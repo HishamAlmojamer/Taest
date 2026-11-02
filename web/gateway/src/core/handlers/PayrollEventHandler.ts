@@ -44,11 +44,11 @@
  */
 
 import { PoolClient } from 'pg';
-import { BaseEvent, PayrollApprovedPayload } from '../events/types';
-import { postAndFinalizeEntry } from '../ledger/JournalEntryService';
+import { BaseEvent, PayrollApprovedPayload, PayrollSettledPayload } from '../events/types';
+import { postAndFinalizeEntry, voidJournalEntry } from '../ledger/JournalEntryService';
 import { CreateJournalEntryData, CreateJournalEntryLineData, STANDARD_ACCOUNTS } from '../ledger/types';
 import { logger } from '../../services/logger';
-import { resolveAccount } from '../utils/accountResolver';
+import { resolveAccounts } from '../utils/accountResolver';
 
 /**
  * Handle the payroll.approved event
@@ -62,7 +62,7 @@ import { resolveAccount } from '../utils/accountResolver';
 export async function handlePayrollApproved(
   event: BaseEvent<PayrollApprovedPayload>,
   client: PoolClient
-): Promise<void> {
+): Promise<{ entryId: number; entryNumber: string }> {
   const { payload, metadata } = event;
 
   logger.info(
@@ -72,33 +72,24 @@ export async function handlePayrollApproved(
   );
 
   // ==========================================
-  // STEP 1: Resolve Account IDs
+  // STEP 1: Resolve Account IDs (single query for performance)
   // ==========================================
-  const salaryExpenseAccount = await resolveAccount(
-    client,
+  const accountCodes = [
     STANDARD_ACCOUNTS.SALARY_EXPENSE.code,
-    metadata.companyId
-  );
-  const bonusExpenseAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.BONUS_EXPENSE.code,
-    metadata.companyId
-  );
-  const allowanceExpenseAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.ALLOWANCE_EXPENSE.code,
-    metadata.companyId
-  );
-  const salariesPayableAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.SALARIES_PAYABLE.code,
-    metadata.companyId
-  );
-  const accruedExpensesAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.ACCRUED_EXPENSES.code,
-    metadata.companyId
-  );
+    STANDARD_ACCOUNTS.EMPLOYEE_ADVANCES.code,
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const salaryExpenseAccount = accounts.get(STANDARD_ACCOUNTS.SALARY_EXPENSE.code)!;
+  const bonusExpenseAccount = accounts.get(STANDARD_ACCOUNTS.BONUS_EXPENSE.code)!;
+  const allowanceExpenseAccount = accounts.get(STANDARD_ACCOUNTS.ALLOWANCE_EXPENSE.code)!;
+  const salariesPayableAccount = accounts.get(STANDARD_ACCOUNTS.SALARIES_PAYABLE.code)!;
+  const accruedExpensesAccount = accounts.get(STANDARD_ACCOUNTS.ACCRUED_EXPENSES.code)!;
+  const employeeAdvancesAccount = accounts.get(STANDARD_ACCOUNTS.EMPLOYEE_ADVANCES.code)!;
 
   // ==========================================
   // STEP 2: Build Journal Entry Lines
@@ -146,14 +137,25 @@ export async function handlePayrollApproved(
     credit: payload.netSalary,
   });
 
-  // LINE 5: CREDIT Deductions (as accrued expense)
-  // Deductions are withheld from the employee's salary
-  if (payload.deductions > 0) {
+  // LINE 5: CREDIT Deductions
+  // Advance installments reduce the Employee Advances asset,
+  // other deductions are withheld (accrued expense).
+  const advanceDeduction = payload.advanceDeduction || 0;
+  const otherDeductions = payload.deductions - advanceDeduction;
+  if (otherDeductions > 0) {
     lines.push({
       accountId: accruedExpensesAccount.id,
       description: `Deductions: ${payload.employeeName}`,
       debit: 0,
-      credit: payload.deductions,
+      credit: otherDeductions,
+    });
+  }
+  if (advanceDeduction > 0) {
+    lines.push({
+      accountId: employeeAdvancesAccount.id,
+      description: `Advance installment: ${payload.employeeName}`,
+      debit: 0,
+      credit: advanceDeduction,
     });
   }
 
@@ -186,19 +188,13 @@ export async function handlePayrollApproved(
 
   const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
 
-  // ==========================================
-  // STEP 5: Link Journal Entry to Payroll Record
-  // ==========================================
-  await client.query(
-    `UPDATE hr_payroll SET journal_entry_id = $1 WHERE id = $2`,
-    [journalEntry.id, payload.payrollId]
-  );
-
   logger.info(
     `PayrollEventHandler: journal entry ${journalEntry.entryNumber} created for payroll ` +
     `| Dr. Salary: ${payload.basicSalary} | Dr. Allowances: ${payload.totalAllowances} | ` +
     `Dr. Bonus: ${payload.bonus} | Cr. Payable: ${payload.netSalary} | Cr. Deductions: ${payload.deductions}`
   );
+
+  return { entryId: journalEntry.id, entryNumber: journalEntry.entryNumber };
 }
 
 /**
@@ -213,20 +209,130 @@ export async function handlePayrollVoided(
   event: BaseEvent<{ payrollId: number; employeeId: number; originalEntryId: number; reason: string }>,
   client: PoolClient
 ): Promise<void> {
-  const { payload } = event;
+  const { payload, metadata } = event;
 
   logger.info(
     `PayrollEventHandler: processing payroll.voided for payroll ${payload.payrollId} ` +
     `(original entry: ${payload.originalEntryId})`
   );
 
-  // Update the payroll status
-  await client.query(
-    `UPDATE hr_payroll SET status = 'voided' WHERE id = $1`,
-    [payload.payrollId]
+  // Step 1: Void the original journal entry (creates reversing entry).
+  // Fail loudly if the original posting is missing rather than silently
+  // leaving the payroll accrual unreversed.
+  if (!payload.originalEntryId) {
+    throw new Error(
+      `PayrollEventHandler: cannot void payroll ${payload.payrollId} - ` +
+      `no original journal entry found (payroll was never posted).`
+    );
+  }
+  await voidJournalEntry(
+    payload.originalEntryId,
+    `Voided payroll for employee ${payload.employeeId}: ${payload.reason}`,
+    client,
+    metadata.userId
   );
 
   logger.info(
     `PayrollEventHandler: payroll ${payload.payrollId} voided successfully`
   );
+}
+
+/**
+ * Handle the payroll.settled event
+ *
+ * Accounting Logic for payroll.settled:
+ *   When an approved payroll is actually paid out (from bank or cash),
+ *   the company's obligation to the employee (Salaries Payable) is cleared:
+ *
+ *   1. DEBIT Salaries Payable (Liability decreases with debit)
+ *      - Account: 2130 - Salaries Payable
+ *      - Amount: netSalary
+ *
+ *   2. CREDIT Bank/Cash (Asset decreases with credit)
+ *      - Account: 1120 - Bank Accounts (default) or 1110 - Cash
+ *      - Amount: netSalary
+ *
+ *   Journal Entry:
+ *     Dr. Salaries Payable  (2130)    netSalary
+ *     Cr. Bank/Cash         (1120/1110) netSalary
+ *
+ *   Double-Entry Verification:
+ *     Dr. Total = netSalary
+ *     Cr. Total = netSalary
+ *     Sum(Debit) = Sum(Credit) ✓
+ *
+ * @param event - The payroll settled event
+ * @param client - Active PoolClient within the caller's transaction
+ */
+export async function handlePayrollSettled(
+  event: BaseEvent<PayrollSettledPayload>,
+  client: PoolClient
+): Promise<{ entryId: number; entryNumber: string }> {
+  const { payload, metadata } = event;
+
+  logger.info(
+    `PayrollEventHandler: processing payroll.settled for employee "${payload.employeeName}" ` +
+    `(period: ${payload.periodMonth}/${payload.periodYear}, net: ${payload.netSalary}, method: ${payload.paymentMethod})`
+  );
+
+  const paymentMethod = (payload.paymentMethod || 'BANK').toUpperCase();
+  const isCash = paymentMethod.includes('CASH');
+
+  // ==========================================
+  // STEP 1: Resolve Account IDs
+  // ==========================================
+  const accountCodes = [
+    STANDARD_ACCOUNTS.SALARIES_PAYABLE.code,
+    isCash ? STANDARD_ACCOUNTS.CASH.code : STANDARD_ACCOUNTS.BANK.code,
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const salariesPayableAccount = accounts.get(STANDARD_ACCOUNTS.SALARIES_PAYABLE.code)!;
+  const fundingAccount = accounts.get(isCash ? STANDARD_ACCOUNTS.CASH.code : STANDARD_ACCOUNTS.BANK.code)!;
+
+  // ==========================================
+  // STEP 2: Build Journal Entry Lines
+  // ==========================================
+  const lines: CreateJournalEntryData['lines'] = [];
+
+  // LINE 1: DEBIT Salaries Payable (clear the obligation)
+  lines.push({
+    accountId: salariesPayableAccount.id,
+    description: `Salary payment: ${payload.employeeName} (${payload.periodMonth}/${payload.periodYear})`,
+    debit: payload.netSalary,
+    credit: 0,
+  });
+
+  // LINE 2: CREDIT Bank/Cash (money leaves the company)
+  lines.push({
+    accountId: fundingAccount.id,
+    description: `Salary payment via ${isCash ? 'cash' : 'bank'}: ${payload.employeeName}`,
+    debit: 0,
+    credit: payload.netSalary,
+  });
+
+  // ==========================================
+  // STEP 3: Post the Journal Entry
+  // ==========================================
+  const periodLabel = `${payload.periodMonth}/${payload.periodYear}`;
+
+  const journalData: CreateJournalEntryData = {
+    entryDate: payload.paymentDate ? new Date(payload.paymentDate) : new Date(),
+    description: `Payroll settlement ${periodLabel} - ${payload.employeeName} (${isCash ? 'cash' : payload.bankAccountName || 'bank'})`,
+    descriptionEn: `Payroll settlement ${periodLabel} - ${payload.employeeName}`,
+    referenceType: 'PayrollSettlement',
+    referenceId: payload.payrollId,
+    createdBy: metadata.userId,
+    companyId: metadata.companyId,
+    lines,
+  };
+
+  const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
+
+  logger.info(
+    `PayrollEventHandler: journal entry ${journalEntry.entryNumber} created for payroll settlement ` +
+    `| Dr. Salaries Payable: ${payload.netSalary} | Cr. ${isCash ? 'Cash' : 'Bank'}: ${payload.netSalary}`
+  );
+
+  return { entryId: journalEntry.id, entryNumber: journalEntry.entryNumber };
 }

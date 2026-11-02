@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, Numeric, Text, Index
+from sqlalchemy import String, Boolean, Integer, Numeric, Text, Index, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -29,8 +29,8 @@ class Project(Base):
     spent_amount: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     currency: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
@@ -62,8 +62,8 @@ class ProjectTask(Base):
     cost_estimate: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     actual_cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
@@ -79,7 +79,7 @@ class ProjectMilestone(Base):
     due_date: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     completion_percentage: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class ProjectResource(Base):
@@ -96,7 +96,7 @@ class ProjectResource(Base):
     start_date: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     end_date: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class ProjectBudget(Base):
@@ -109,7 +109,7 @@ class ProjectBudget(Base):
     budget_amount: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     spent_amount: Mapped[Optional[float]] = mapped_column(Numeric(15, 4), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class ProjectExpense(Base):
@@ -127,4 +127,4 @@ class ProjectExpense(Base):
     approved_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

@@ -35,6 +35,7 @@ class SaleCreate(BaseModel):
     payment_status: str = "paid"
     company_id: Optional[int] = 1
     branch_id: Optional[int] = 1
+    fiscal_period_id: Optional[int] = None
     invoice_number: Optional[str] = None
     tax_amount: float = 0
     tax_id: Optional[int] = None
@@ -55,7 +56,9 @@ class SaleResponse(BaseModel):
     workflow_state: str
     company_id: Optional[int] = None
     branch_id: Optional[int] = None
+    fiscal_period_id: Optional[int] = None
     invoice_number: Optional[str] = None
+    journal_entry_id: Optional[int] = None
     tax_amount: float
     tax_id: Optional[int] = None
     notes: Optional[str] = None

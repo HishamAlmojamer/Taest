@@ -34,7 +34,7 @@ import { BaseEvent, InventoryGoodsReceivedPayload } from '../events/types';
 import { postAndFinalizeEntry } from '../ledger/JournalEntryService';
 import { CreateJournalEntryData, STANDARD_ACCOUNTS } from '../ledger/types';
 import { logger } from '../../services/logger';
-import { resolveAccount } from '../utils/accountResolver';
+import { resolveAccounts } from '../utils/accountResolver';
 
 /**
  * Handle the inventory.goods.received event
@@ -48,7 +48,7 @@ import { resolveAccount } from '../utils/accountResolver';
 export async function handleInventoryGoodsReceived(
   event: BaseEvent<InventoryGoodsReceivedPayload>,
   client: PoolClient
-): Promise<void> {
+): Promise<{ entryId: number; entryNumber: string }> {
   const { payload, metadata } = event;
 
   logger.info(
@@ -57,18 +57,16 @@ export async function handleInventoryGoodsReceived(
   );
 
   // ==========================================
-  // STEP 1: Resolve Account IDs
+  // STEP 1: Resolve Account IDs (single query for performance)
   // ==========================================
-  const inventoryAccount = await resolveAccount(
-    client,
+  const accountCodes = [
     STANDARD_ACCOUNTS.INVENTORY_ASSET.code,
-    metadata.companyId
-  );
-  const grniAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.GRNI_ACCRUAL.code,
-    metadata.companyId
-  );
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const inventoryAccount = accounts.get(STANDARD_ACCOUNTS.INVENTORY_ASSET.code)!;
+  const grniAccount = accounts.get(STANDARD_ACCOUNTS.GRNI_ACCRUAL.code)!;
 
   // ==========================================
   // STEP 2: Build Journal Entry Lines
@@ -112,19 +110,13 @@ export async function handleInventoryGoodsReceived(
 
   const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
 
-  // ==========================================
-  // STEP 4: Link Journal Entry to Inventory Transaction
-  // ==========================================
-  await client.query(
-    `UPDATE stock_movements SET journal_entry_id = $1 WHERE id = $2`,
-    [journalEntry.id, payload.transactionId]
-  );
-
   logger.info(
     `InventoryEventHandler: journal entry ${journalEntry.entryNumber} created for goods received ` +
     `| Dr. Inventory: ${payload.totalCost} | Cr. GRNI: ${payload.totalCost} ` +
     `| Product: ${payload.productName} | Warehouse: ${payload.warehouseName}`
   );
+
+  return { entryId: journalEntry.id, entryNumber: journalEntry.entryNumber };
 }
 
 /**
@@ -159,16 +151,14 @@ export async function handleInventoryGoodsIssued(
     `(qty: ${payload.quantity}, unit cost: ${payload.unitCost}, total: ${payload.totalCost})`
   );
 
-  const cogsAccount = await resolveAccount(
-    client,
+  const accountCodes = [
     STANDARD_ACCOUNTS.COST_OF_GOODS_SOLD.code,
-    metadata.companyId
-  );
-  const inventoryAccount = await resolveAccount(
-    client,
     STANDARD_ACCOUNTS.INVENTORY_ASSET.code,
-    metadata.companyId
-  );
+  ];
+  const accounts = await resolveAccounts(client, accountCodes, metadata.companyId);
+
+  const cogsAccount = accounts.get(STANDARD_ACCOUNTS.COST_OF_GOODS_SOLD.code)!;
+  const inventoryAccount = accounts.get(STANDARD_ACCOUNTS.INVENTORY_ASSET.code)!;
 
   const lines: CreateJournalEntryData['lines'] = [
     {
@@ -197,11 +187,6 @@ export async function handleInventoryGoodsIssued(
   };
 
   const journalEntry = await postAndFinalizeEntry(journalData, client, metadata.userId);
-
-  await client.query(
-    `UPDATE stock_movements SET journal_entry_id = $1 WHERE id = $2`,
-    [journalEntry.id, payload.transactionId]
-  );
 
   logger.info(
     `InventoryEventHandler: journal entry ${journalEntry.entryNumber} created for goods issued ` +

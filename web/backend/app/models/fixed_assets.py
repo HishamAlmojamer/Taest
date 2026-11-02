@@ -39,6 +39,7 @@ class FixedAsset(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     name_ar: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

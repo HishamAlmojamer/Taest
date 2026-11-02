@@ -12,6 +12,9 @@ interface NavItem {
 
 const allNavItems: NavItem[] = [
   { label: 'الرئيسية', path: '/dashboard', group: 'القائمة', icon: '🏠' },
+  { label: 'الإشعارات', path: '/notifications', group: 'القائمة', icon: '🔔' },
+  { label: 'العروض الترويجية', path: '/promotions', group: 'المبيعات', icon: '🎯' },
+  { label: 'برنامج الولاء', path: '/crm/loyalty', group: 'العملاء والموردين', icon: '⭐' },
   { label: 'فواتير المبيعات', path: '/sales', group: 'المبيعات', icon: '📄' },
   { label: 'فاتورة مبيعات جديدة', path: '/sales/new', group: 'المبيعات', icon: '➕' },
   { label: 'أوامر الشراء', path: '/purchases', group: 'المشتريات', icon: '🛒' },
@@ -24,21 +27,52 @@ const allNavItems: NavItem[] = [
   { label: 'العملاء', path: '/crm/customers', group: 'العملاء والموردين', icon: '👥' },
   { label: 'الموردين', path: '/crm/suppliers', group: 'العملاء والموردين', icon: '🏢' },
   { label: 'العملاء المحتملون', path: '/crm/leads', group: 'العملاء والموردين', icon: '⚡' },
+  { label: 'شجرة العملاء والموردين', path: '/crm/tree', group: 'العملاء والموردين', icon: '🌳' },
   { label: 'دليل الحسابات', path: '/accounting/accounts', group: 'المحاسبة', icon: '📊' },
   { label: 'القيود اليومية', path: '/accounting/journal', group: 'المحاسبة', icon: '📝' },
   { label: 'ميزان المراجعة', path: '/accounting/trial-balance', group: 'المحاسبة', icon: '⚖️' },
+  { label: 'القوائم المالية', path: '/accounting/financial-statements', group: 'المحاسبة', icon: '📋' },
+  { label: 'الفترات المالية', path: '/accounting/periods', group: 'المحاسبة', icon: '🗓️' },
+  { label: 'الأصول الثابتة', path: '/accounting/fixed-assets', group: 'المحاسبة', icon: '🏗️' },
+  { label: 'الميزانيات', path: '/accounting/budgets', group: 'المحاسبة', icon: '🎯' },
+  { label: 'تقارير الأعمار', path: '/accounting/aging-reports', group: 'المحاسبة', icon: '⏳' },
+  { label: 'دفتر الأستاذ العام', path: '/accounting/general-ledger', group: 'المحاسبة', icon: '📒' },
+  { label: 'مراكز التكلفة', path: '/accounting/cost-centers', group: 'المحاسبة', icon: '📊' },
+  { label: 'قوالب القيود الدورية', path: '/accounting/recurring-je', group: 'المحاسبة', icon: '🔄' },
   { label: 'مدفوعات العملاء', path: '/payments/customers', group: 'المدفوعات', icon: '💰' },
   { label: 'مدفوعات الموردين', path: '/payments/suppliers', group: 'المدفوعات', icon: '💸' },
   { label: 'الحسابات البنكية', path: '/payments/banks', group: 'المدفوعات', icon: '🏦' },
+  { label: 'الشيكات', path: '/payments/cheques', group: 'المدفوعات', icon: '🪙' },
+  { label: 'التسوية البنكية', path: '/payments/bank-reconciliation', group: 'المدفوعات', icon: '🔄' },
   { label: 'الموظفون', path: '/hr/employees', group: 'الموارد البشرية', icon: '👤' },
   { label: 'الأقسام', path: '/hr/departments', group: 'الموارد البشرية', icon: '🏛️' },
   { label: 'الحضور والغياب', path: '/hr/attendance', group: 'الموارد البشرية', icon: '⏰' },
   { label: 'الإجازات', path: '/hr/leaves', group: 'الموارد البشرية', icon: '🏖️' },
   { label: 'كشف الرواتب', path: '/hr/payroll', group: 'الموارد البشرية', icon: '💵' },
+  { label: 'سلف الموظفين', path: '/hr/advances', group: 'الموارد البشرية', icon: '💳' },
+  { label: 'لوحة الموارد البشرية', path: '/hr/dashboard', group: 'الموارد البشرية', icon: '📊' },
+  { label: 'الوظائف', path: '/hr/positions', group: 'الموارد البشرية', icon: '🎖️' },
+  { label: 'ورديات العمل', path: '/hr/shifts', group: 'الموارد البشرية', icon: '🕐' },
+  { label: 'أنواع وأرصدة الإجازات', path: '/hr/leave-types', group: 'الموارد البشرية', icon: '🗂️' },
+  { label: 'الإضافي', path: '/hr/overtime', group: 'الموارد البشرية', icon: '⚡' },
+  { label: 'البدلات والمكافآت', path: '/hr/salary-adjustments', group: 'الموارد البشرية', icon: '🎁' },
+  { label: 'العقود', path: '/hr/contracts', group: 'الموارد البشرية', icon: '📄' },
+  { label: 'الاستقالات', path: '/hr/resignations', group: 'الموارد البشرية', icon: '🚪' },
+  { label: 'التقييمات', path: '/hr/performance-reviews', group: 'الموارد البشرية', icon: '⭐' },
+  { label: 'التوظيف', path: '/hr/recruitment', group: 'الموارد البشرية', icon: '🎯' },
+  { label: 'التدريب والتطوير', path: '/hr/training', group: 'الموارد البشرية', icon: '🎓' },
+  { label: 'مستندات الموظفين', path: '/hr/documents', group: 'الموارد البشرية', icon: '🗃️' },
+  { label: 'الإجازات الرسمية', path: '/hr/holidays', group: 'الموارد البشرية', icon: '🎉' },
   { label: 'المشاريع', path: '/projects', group: 'المشاريع', icon: '📁' },
-  { label: 'المستخدمون', path: '/settings/users', group: 'الإعدادات', icon: '⚙️' },
+  { label: 'الإعدادات العامة', path: '/settings/general', group: 'الإعدادات', icon: '⚙️' },
+  { label: 'الفروع', path: '/settings/branches', group: 'الإعدادات', icon: '🏬' },
+  { label: 'المستخدمون', path: '/settings/users', group: 'الإعدادات', icon: '👤' },
+  { label: 'الأدوار والصلاحيات', path: '/settings/roles', group: 'الإعدادات', icon: '🔐' },
   { label: 'الشركات', path: '/settings/companies', group: 'الإعدادات', icon: '🏢' },
   { label: 'سير العمل', path: '/settings/workflow', group: 'الإعدادات', icon: '🔄' },
+  { label: 'سجل التدقيق', path: '/settings/audit-log', group: 'الإعدادات', icon: '📜' },
+  { label: 'العملات وأسعار الصرف', path: '/settings/currencies', group: 'الإعدادات', icon: '💱' },
+  { label: 'نِسب الضرائب', path: '/settings/tax-rates', group: 'الإعدادات', icon: '🏛️' },
   { label: 'تقرير المبيعات', path: '/reports/sales', group: 'التقارير', icon: '📈' },
   { label: 'تقرير المشتريات', path: '/reports/purchases', group: 'التقارير', icon: '📉' },
   { label: 'التقرير المالي', path: '/reports/financial', group: 'التقارير', icon: '💹' },
@@ -50,6 +84,7 @@ export function CommandPalette() {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return allNavItems;
@@ -85,6 +120,20 @@ export function CommandPalette() {
     setActiveIndex(0);
   }, [query]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const activeItem = listRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    activeItem?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
   const handleSelect = useCallback(
     (path: string) => {
       navigate(path);
@@ -119,9 +168,14 @@ export function CommandPalette() {
         if (e.target === e.currentTarget) close();
       }}
     >
-      <div className="w-full max-w-lg mx-4 glass rounded-2xl shadow-2xl animate-scale-in overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-zinc-700">
-          <svg className="h-5 w-5 text-gray-400 dark:text-zinc-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="البحث السريع"
+        className="mx-4 w-full max-w-lg animate-scale-in overflow-hidden rounded-2xl shadow-2xl glass"
+      >
+        <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-3 dark:border-zinc-700">
+          <svg className="h-5 w-5 flex-shrink-0 text-gray-400 dark:text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -131,23 +185,41 @@ export function CommandPalette() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="ابحث عن صفحة أو وحدة..."
-            className="flex-1 bg-transparent outline-none text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-500"
+            aria-label="ابحث عن صفحة أو وحدة"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-results"
+            aria-activedescendant={
+              filtered[activeIndex] ? `command-palette-item-${activeIndex}` : undefined
+            }
+            className="flex-1 bg-transparent text-gray-900 outline-none placeholder-gray-400 dark:text-zinc-100 dark:placeholder-zinc-500"
           />
           <kbd className="hidden sm:inline-flex items-center px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-zinc-400 bg-gray-100 dark:bg-zinc-800 rounded">
             ESC
           </kbd>
         </div>
 
-        <div className="max-h-80 overflow-y-auto p-2">
+        <div
+          ref={listRef}
+          id="command-palette-results"
+          role="listbox"
+          aria-label="نتائج البحث"
+          className="max-h-80 overflow-y-auto p-2"
+        >
           {filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-gray-500 dark:text-zinc-400">
-              لا توجد نتائج
+              لا توجد نتائج لـ «{query.trim()}»
             </div>
           ) : (
             filtered.map((item, idx) => (
               <button
                 key={item.path}
+                id={`command-palette-item-${idx}`}
+                role="option"
+                aria-selected={idx === activeIndex}
+                data-active={idx === activeIndex}
                 onClick={() => handleSelect(item.path)}
+                onMouseEnter={() => setActiveIndex(idx)}
                 className={cn(
                   'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors text-right',
                   idx === activeIndex

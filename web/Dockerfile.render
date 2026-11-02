@@ -1,0 +1,66 @@
+# Free-tier Render image: one container runs the gateway (public port), the
+# FastAPI backend (127.0.0.1:8001) and serves the built SPA from the gateway.
+# This avoids a paid private service while keeping the original architecture.
+
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM node:20-alpine AS gateway-build
+
+WORKDIR /gateway
+COPY gateway/package*.json ./
+RUN npm ci
+COPY gateway/tsconfig.json ./
+COPY gateway/src ./src
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    NODE_ENV=production \
+    ENVIRONMENT=production \
+    TZ=Asia/Riyadh \
+    SERVE_FRONTEND_DIR=/app/public \
+    PYTHON_BACKEND_URL=http://127.0.0.1:8001
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir -r backend/requirements.txt
+
+COPY backend/app ./backend/app
+COPY backend/alembic ./backend/alembic
+COPY backend/alembic.ini ./backend/alembic.ini
+
+COPY gateway/package*.json ./gateway/
+RUN cd gateway && npm ci --omit=dev && npm cache clean --force
+
+COPY --from=gateway-build /gateway/dist ./gateway/dist
+COPY --from=frontend-build /frontend/dist ./public
+COPY start-render.sh ./start-render.sh
+
+RUN chmod +x ./start-render.sh \
+    && useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./start-render.sh"]

@@ -48,6 +48,7 @@ class ProductCreate(BaseModel):
     brand: Optional[str] = None
     description: Optional[str] = None
     company_id: int = 1
+    currency_id: Optional[int] = None
 
 
 class ProductResponse(BaseModel):
@@ -60,6 +61,7 @@ class ProductResponse(BaseModel):
     barcode: Optional[str] = None
     category_id: Optional[int] = None
     unit_id: Optional[int] = None
+    currency_id: Optional[int] = None
     unit: str = ""
     purchase_price: float = 0
     selling_price: float = 0
@@ -74,7 +76,7 @@ class ProductResponse(BaseModel):
     tax_percent: float = 0
     brand: Optional[str] = None
     description: Optional[str] = None
-    is_active: bool = True
+    is_active: Optional[bool] = True
     company_id: Optional[int] = None
     created_at: Any = None
     updated_at: Any = None

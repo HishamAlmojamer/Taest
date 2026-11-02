@@ -4,6 +4,8 @@ import { getARAging, getAPAging, getCustomerStatement, getSupplierStatement } fr
 import { getCustomers, getSuppliers } from '@/api/crm';
 import { StatsCard } from '@/components/ui/StatsCard';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import ExcelExportButton from '@/components/excel/ExcelExportButton';
 
 export default function AgingReportsPage() {
   const [activeTab, setActiveTab] = useState<'ar' | 'ap' | 'customer-statement' | 'supplier-statement'>('ar');
@@ -50,38 +52,48 @@ export default function AgingReportsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">تقارير أعمار الذمم</h1>
-        <div className="flex gap-2">
+      <PageHeader
+        title="تقارير أعمار الذمم"
+        subtitle="عرض تقارير أعمار الذمم المدينة والدائنة"
+        icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
+        actions={<div className="flex gap-2">
           <button
             onClick={() => setActiveTab('ar')}
-            className={`px-4 py-2 rounded-lg ${activeTab === 'ar' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+            className={`px-4 py-2 rounded-lg ${activeTab === 'ar' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800'}`}
           >
             أعمار الذمم المدينة
           </button>
           <button
             onClick={() => setActiveTab('ap')}
-            className={`px-4 py-2 rounded-lg ${activeTab === 'ap' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+            className={`px-4 py-2 rounded-lg ${activeTab === 'ap' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800'}`}
           >
             أعمار الذمم الدائنة
           </button>
           <button
             onClick={() => setActiveTab('customer-statement')}
-            className={`px-4 py-2 rounded-lg ${activeTab === 'customer-statement' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+            className={`px-4 py-2 rounded-lg ${activeTab === 'customer-statement' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800'}`}
           >
             كشف حساب عميل
           </button>
           <button
             onClick={() => setActiveTab('supplier-statement')}
-            className={`px-4 py-2 rounded-lg ${activeTab === 'supplier-statement' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+            className={`px-4 py-2 rounded-lg ${activeTab === 'supplier-statement' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800'}`}
           >
             كشف حساب مورد
           </button>
-        </div>
-      </div>
+          {(activeTab === 'ar' || activeTab === 'ap') && (
+            <ExcelExportButton
+              url={activeTab === 'ar' ? '/excel/exports/ar-aging' : '/excel/exports/ap-aging'}
+              params={{ as_of_date: asOfDate }}
+              filename={`${activeTab === 'ar' ? 'ar' : 'ap'}-aging-${asOfDate}.xlsx`}
+              label={`تصدير ${activeTab === 'ar' ? 'المدينين' : 'الدائنين'} Excel`}
+            />
+          )}
+        </div>}
+      />
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-lg shadow">
+      <div className="card p-4">
         {(activeTab === 'ar' || activeTab === 'ap') ? (
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium">حتى تاريخ:</label>
@@ -147,9 +159,9 @@ export default function AgingReportsPage() {
             <StatsCard title="أكثر من 90 يوم" value={arAging.over_90?.toLocaleString() || '0'} />
           </div>
 
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="card overflow-hidden">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="table-header">
                 <tr>
                   <th className="px-4 py-3 text-right">العميل</th>
                   <th className="px-4 py-3 text-right">الرصيد</th>
@@ -161,7 +173,7 @@ export default function AgingReportsPage() {
               </thead>
               <tbody>
                 {arAging.customers?.map((customer: any) => (
-                  <tr key={customer.customer_id} className="border-t hover:bg-gray-50">
+                  <tr key={customer.customer_id} className="table-row">
                     <td className="px-4 py-3">{customer.customer_name}</td>
                     <td className="px-4 py-3 font-medium">{customer.total?.toLocaleString()}</td>
                     <td className="px-4 py-3">{customer.current?.toLocaleString()}</td>
@@ -172,7 +184,7 @@ export default function AgingReportsPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="font-bold border-t-2 bg-gray-50">
+                <tr className="font-bold border-t-2 bg-gray-50 dark:bg-zinc-800">
                   <td className="px-4 py-3">الإجمالي</td>
                   <td className="px-4 py-3">{arAging.total?.toLocaleString()}</td>
                   <td className="px-4 py-3">{arAging.current?.toLocaleString()}</td>
@@ -197,9 +209,9 @@ export default function AgingReportsPage() {
             <StatsCard title="أكثر من 90 يوم" value={apAging.over_90?.toLocaleString() || '0'} />
           </div>
 
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="card overflow-hidden">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="table-header">
                 <tr>
                   <th className="px-4 py-3 text-right">المورد</th>
                   <th className="px-4 py-3 text-right">الرصيد</th>
@@ -211,7 +223,7 @@ export default function AgingReportsPage() {
               </thead>
               <tbody>
                 {apAging.suppliers?.map((supplier: any) => (
-                  <tr key={supplier.supplier_id} className="border-t hover:bg-gray-50">
+                  <tr key={supplier.supplier_id} className="table-row">
                     <td className="px-4 py-3">{supplier.supplier_name}</td>
                     <td className="px-4 py-3 font-medium">{supplier.total?.toLocaleString()}</td>
                     <td className="px-4 py-3">{supplier.current?.toLocaleString()}</td>
@@ -222,7 +234,7 @@ export default function AgingReportsPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="font-bold border-t-2 bg-gray-50">
+                <tr className="font-bold border-t-2 bg-gray-50 dark:bg-zinc-800">
                   <td className="px-4 py-3">الإجمالي</td>
                   <td className="px-4 py-3">{apAging.total?.toLocaleString()}</td>
                   <td className="px-4 py-3">{apAging.current?.toLocaleString()}</td>
@@ -248,12 +260,12 @@ export default function AgingReportsPage() {
             />
           </div>
 
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="card overflow-hidden">
             <div className="p-4 border-b">
               <h3 className="font-bold">كشف حساب العميل - {customerStatement.customer_name}</h3>
             </div>
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="table-header">
                 <tr>
                   <th className="px-4 py-3 text-right">التاريخ</th>
                   <th className="px-4 py-3 text-right">المرجع</th>
@@ -265,7 +277,7 @@ export default function AgingReportsPage() {
               </thead>
               <tbody>
                 {customerStatement.transactions?.map((txn: any, idx: number) => (
-                  <tr key={idx} className="border-t hover:bg-gray-50">
+                  <tr key={idx} className="table-row">
                     <td className="px-4 py-3">{txn.date}</td>
                     <td className="px-4 py-3">{txn.reference}</td>
                     <td className="px-4 py-3">{txn.description}</td>
@@ -292,12 +304,12 @@ export default function AgingReportsPage() {
             />
           </div>
 
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="card overflow-hidden">
             <div className="p-4 border-b">
               <h3 className="font-bold">كشف حساب المورد - {supplierStatement.supplier_name}</h3>
             </div>
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="table-header">
                 <tr>
                   <th className="px-4 py-3 text-right">التاريخ</th>
                   <th className="px-4 py-3 text-right">المرجع</th>
@@ -309,7 +321,7 @@ export default function AgingReportsPage() {
               </thead>
               <tbody>
                 {supplierStatement.transactions?.map((txn: any, idx: number) => (
-                  <tr key={idx} className="border-t hover:bg-gray-50">
+                  <tr key={idx} className="table-row">
                     <td className="px-4 py-3">{txn.date}</td>
                     <td className="px-4 py-3">{txn.reference}</td>
                     <td className="px-4 py-3">{txn.description}</td>
@@ -325,7 +337,7 @@ export default function AgingReportsPage() {
       )}
 
       {(arLoading || apLoading || csLoading || ssLoading) && (
-        <div className="text-center py-8">جاري التحميل...</div>
+        <div className="text-center py-8 text-gray-600 dark:text-zinc-400">جاري التحميل...</div>
       )}
     </div>
   );

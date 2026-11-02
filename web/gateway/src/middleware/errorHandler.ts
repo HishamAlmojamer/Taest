@@ -39,5 +39,11 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     return;
   }
 
+  // Expected accounting/ledger rule failures are client mistakes, not server faults
+  if (err.name === 'LedgerValidationError') {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
   res.status(500).json({ error: 'Internal server error' });
 }

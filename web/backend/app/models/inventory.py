@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, Numeric, Text, Index
+from sqlalchemy import String, Boolean, Integer, Numeric, Text, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -57,8 +57,9 @@ class Product(Base):
     location: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     unit_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    currency_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     name_en: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class Warehouse(Base):

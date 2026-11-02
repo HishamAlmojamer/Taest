@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TreeNode {
@@ -16,15 +16,19 @@ interface TreeViewProps {
   searchPlaceholder?: string;
   defaultExpanded?: boolean;
   className?: string;
+  expandAllSignal?: number;
+  collapseAllSignal?: number;
 }
 
 export function TreeView({
   nodes,
   onSelect,
   searchable = false,
-  searchPlaceholder = 'بحث في الحسابات...',
+  searchPlaceholder = '�?�?� �?�? �?�?�?�?�?�?�?�?...',
   defaultExpanded = true,
   className,
+  expandAllSignal = 0,
+  collapseAllSignal = 0,
 }: TreeViewProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string | number>>(() => {
     if (!defaultExpanded) return new Set();
@@ -40,6 +44,29 @@ export function TreeView({
     collect(nodes);
     return ids;
   });
+
+  // Allow the parent to programmatically expand/collapse the whole tree.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  useEffect(() => {
+    if (expandAllSignal === 0 && collapseAllSignal === 0) return;
+    const latest = nodesRef.current;
+    if (expandAllSignal > 0) {
+      const ids = new Set<string | number>();
+      const collect = (items: TreeNode[]) => {
+        items.forEach((item) => {
+          if (item.children && item.children.length > 0) {
+            ids.add(item.id);
+            collect(item.children);
+          }
+        });
+      };
+      collect(latest);
+      setExpandedIds(ids);
+    } else if (collapseAllSignal > 0) {
+      setExpandedIds(new Set());
+    }
+  }, [expandAllSignal, collapseAllSignal]);
 
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | number | null>(null);

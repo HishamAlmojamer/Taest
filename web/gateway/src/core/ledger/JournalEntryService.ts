@@ -27,15 +27,101 @@ import {
 } from './types';
 
 /**
+ * Format a Date as its local calendar date (YYYY-MM-DD).
+ *
+ * `entry_date` is a `timestamp without time zone` column holding a business
+ * date, so using `toISOString()` would shift the date for any timezone east or
+ * west of UTC (e.g. a 2026-06-15 entry becomes 2026-06-14 at UTC+3).
+ */
+function toDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Business/validation error raised by the ledger engine for expected
+ * conditions (unbalanced entry, idempotency violation, closed accounting
+ * period, invalid account, entry not-posted). The HTTP layer maps this to a
+ * 400 Bad Request instead of a 500 Internal Server Error.
+ */
+export class LedgerValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LedgerValidationError';
+  }
+}
+
+/**
+ * Assert that the accounting period covering `entryDate` is open.
+ *
+ * If a fiscal period exists for the date and is closed/locked (or
+ * soft-closed with blocking enabled), posting is rejected. When no period
+ * covers the date, or the fiscal_periods table is unavailable in the
+ * deployment, the check is skipped (open by default) so legacy installs
+ * keep working.
+ *
+ * @param client - Active PoolClient within a transaction
+ * @param entryDate - Date the entry would be posted to
+ * @param companyId - Optional company scope (matched via fiscal_years)
+ * @throws LedgerValidationError if the covering period is closed or locked
+ */
+async function assertPeriodOpen(
+  client: PoolClient,
+  entryDate: Date,
+  companyId?: number | null
+): Promise<void> {
+  const dateISO = toDateOnly(entryDate);
+  const params: unknown[] = [dateISO, dateISO];
+  let sql = `
+    SELECT fp.id, fp.name, fp.is_closed, fp.is_locked, fp.is_soft_closed
+    FROM fiscal_periods fp
+    WHERE fp.start_date <= $1 AND fp.end_date >= $2
+  `;
+  if (companyId) {
+    sql += ` AND fp.fiscal_year_id IN (
+              SELECT fy.id FROM fiscal_years fy
+              WHERE fy.company_id = $3 OR fy.company_id IS NULL
+            )`;
+    params.push(companyId);
+  }
+  sql += ` ORDER BY fp.start_date DESC LIMIT 1`;
+
+  try {
+    const result = await client.query(sql, params);
+    if (result.rows.length === 0) {
+      return; // no configured period for this date → open
+    }
+    const period = result.rows[0];
+    if (period.is_closed || period.is_locked) {
+      throw new LedgerValidationError(
+        `Cannot post: accounting period "${period.name}" (${String(period.start_date)} to ${String(period.end_date)}) is closed or locked`
+      );
+    }
+  } catch (error) {
+    if (error instanceof LedgerValidationError) {
+      throw error;
+    }
+    // fiscal_periods table missing on this deployment → enforcement unavailable
+    logger.warn(`LedgerEngine: period-open check skipped (${(error as Error).message})`);
+  }
+}
+
+/**
  * Generate a unique entry number in format: JE-YYYY-NNNNNN
  * Uses PostgreSQL sequence for concurrency safety
  */
 async function generateEntryNumber(client: PoolClient): Promise<string> {
   const year = new Date().getFullYear();
   const seqResult = await client.query(
-    `SELECT nextval('journal_entry_number_seq') as seq`
+    `SELECT setval('journal_entry_number_seq', GREATEST(
+        nextval('journal_entry_number_seq'),
+        (SELECT COALESCE(MAX(NULLIF(regexp_replace(entry_number, '^.*-', '', 'g'), '')::bigint), 0) + 1
+         FROM journal_entries)
+      ), true) as n`
   );
-  const seq = seqResult.rows[0].seq.toString().padStart(6, '0');
+  const seq = seqResult.rows[0].n.toString().padStart(6, '0');
   return `JE-${year}-${seq}`;
 }
 
@@ -46,8 +132,8 @@ async function generateEntryNumber(client: PoolClient): Promise<string> {
  *   1. Validates that Σ(Debit) ≡ Σ(Credit)
  *   2. Opens a PostgreSQL transaction (passed in as `client`)
  *   3. Inserts the main record into `journal_entries`
- *   4. Inserts the split lines into `journal_items`
- *   5. Updates running balances in `chart_of_accounts`
+ *   4. Inserts the split lines into `journal_entry_lines`
+ *   5. Account balances are computed from `journal_entry_lines`
  *   6. Commits or rolls back safely on any failure
  *
  * @param data - The journal entry data with lines
@@ -62,6 +148,37 @@ export async function postJournalEntry(
   client: PoolClient
 ): Promise<JournalEntryWithLines> {
   // ==========================================
+  // STEP 0: Idempotency Guard
+  // ==========================================
+  // Prevent duplicate journal entries when the same business event is
+  // (re-)delivered. If a posted entry already exists for the same
+  // (reference_type, reference_id), reject the write. This guards against
+  // double-posting if an event is emitted twice (e.g. retry / network issue).
+  // Reversing entries carry reference_type='JournalEntryReversal' so they are
+  // never blocked by this check.
+  if (data.referenceType && data.referenceId) {
+    const dupResult = await client.query(
+      `SELECT id FROM journal_entries
+       WHERE reference_type = $1 AND reference_id = $2 AND status != 'Voided'
+       LIMIT 1`,
+      [data.referenceType, data.referenceId]
+    );
+    if (dupResult.rows.length > 0) {
+      throw new LedgerValidationError(
+        `Idempotency violation: a posted journal entry already exists for ` +
+        `${data.referenceType} #${data.referenceId} (entry id: ${dupResult.rows[0].id}). ` +
+        `Refusing to create a duplicate.`
+      );
+    }
+  }
+
+  // ==========================================
+  // STEP 0b: Accounting Period Open Check
+  // ==========================================
+  // Reject postings dated into a closed/locked fiscal period.
+  await assertPeriodOpen(client, data.entryDate, data.companyId);
+
+  // ==========================================
   // STEP 1: Validate Double-Entry Integrity
   // ==========================================
   const totalDebit = data.lines.reduce((sum, line) => sum + (line.debit || 0), 0);
@@ -70,7 +187,7 @@ export async function postJournalEntry(
   // Use a small tolerance for floating-point comparison (NUMERIC(15,4))
   const tolerance = 0.01;
   if (Math.abs(totalDebit - totalCredit) > tolerance) {
-    throw new Error(
+    throw new LedgerValidationError(
       `Journal entry is not balanced. Debits: ${totalDebit.toFixed(4)}, Credits: ${totalCredit.toFixed(4)}, Difference: ${Math.abs(totalDebit - totalCredit).toFixed(4)}`
     );
   }
@@ -79,26 +196,65 @@ export async function postJournalEntry(
   for (let i = 0; i < data.lines.length; i++) {
     const line = data.lines[i];
     if (line.debit < 0 || line.credit < 0) {
-      throw new Error(
+      throw new LedgerValidationError(
         `Line ${i + 1}: Debit and Credit values must be >= 0 (debit: ${line.debit}, credit: ${line.credit})`
       );
     }
     if (line.debit === 0 && line.credit === 0) {
-      throw new Error(`Line ${i + 1}: Either debit or credit must be > 0`);
+      throw new LedgerValidationError(`Line ${i + 1}: Either debit or credit must be > 0`);
     }
     if (line.debit > 0 && line.credit > 0) {
-      throw new Error(
+      throw new LedgerValidationError(
         `Line ${i + 1}: Cannot have both debit and credit on the same line (debit: ${line.debit}, credit: ${line.credit})`
       );
     }
   }
 
   if (data.lines.length < 2) {
-    throw new Error('Journal entry must have at least 2 lines');
+    throw new LedgerValidationError('Journal entry must have at least 2 lines');
   }
 
   // ==========================================
-  // STEP 2: Insert Main Journal Entry Record
+  // STEP 2: Validate Accounts Before Any Write
+  // ==========================================
+  // The gateway is the last line of defence for the chart-of-accounts
+  // posting rules. Every account referenced by a line must:
+  //   a) exist,
+  //   b) be active,
+  //   c) NOT be a control / group account (control accounts only aggregate
+  //      their children and cannot receive direct postings).
+  // Doing this BEFORE the inserts avoids partial writes and makes the
+  // failures deterministic (no writes at all when an account is invalid).
+  const accountIds = data.lines.map((line) => line.accountId);
+  const accountResult = await client.query(
+    `SELECT id, account_code AS code, is_active, is_control
+     FROM accounts WHERE id = ANY($1)`,
+    [accountIds]
+  );
+  const validAccounts = new Map(
+    accountResult.rows.map((r) => [Number(r.id), r])
+  );
+  for (const line of data.lines) {
+    const account = validAccounts.get(line.accountId);
+    if (!account) {
+      throw new LedgerValidationError(
+        `Account with id ${line.accountId} not found in chart of accounts`
+      );
+    }
+    if (!account.is_active) {
+      throw new LedgerValidationError(
+        `Account "${account.code}" is inactive and cannot receive postings`
+      );
+    }
+    if (account.is_control) {
+      throw new LedgerValidationError(
+        `Account "${account.code}" is a control (group) account and cannot receive postings. Use a leaf account instead.`
+      );
+    }
+  }
+
+  // ==========================================
+  // STEP 3: Insert Main Journal Entry Record
   // ==========================================
   const entryNumber = await generateEntryNumber(client);
 
@@ -110,7 +266,7 @@ export async function postJournalEntry(
      RETURNING id, entry_number, entry_date, description, status, created_at`,
     [
       entryNumber,
-      data.entryDate.toISOString(),
+      toDateOnly(data.entryDate),
       data.description,
       data.descriptionEn || null,
       data.referenceType || null,
@@ -140,8 +296,8 @@ export async function postJournalEntry(
       `$${paramIndex + 2}`, // description
       `$${paramIndex + 3}`, // debit
       `$${paramIndex + 4}`, // credit
-      `$${paramIndex + 5}`, // partner_id
-      `$${paramIndex + 6}`, // cost_center_id
+      `$${paramIndex + 5}`, // cost_center_id
+      `$${paramIndex + 6}`, // partner_id
       `$${paramIndex + 7}`, // project_id
       `$${paramIndex + 8}`, // created_at
     ].join(', ')})`;
@@ -153,8 +309,8 @@ export async function postJournalEntry(
       line.description || data.description,
       line.debit || 0,
       line.credit || 0,
-      line.partnerId || null,
       line.costCenterId || null,
+      line.partnerId || null,
       line.projectId || null,
       new Date().toISOString(),
     ]);
@@ -162,35 +318,18 @@ export async function postJournalEntry(
   }
 
   const linesResult = await client.query(
-    `INSERT INTO journal_items
+    `INSERT INTO journal_entry_lines
        (journal_entry_id, account_id, description, debit, credit,
-        partner_id, cost_center_id, project_id, created_at)
+        cost_center_id, partner_id, project_id, created_at)
      VALUES ${linePlaceholders.join(', ')}
      RETURNING id, journal_entry_id, account_id, description, debit, credit,
-               partner_id, cost_center_id, project_id`,
+               cost_center_id, partner_id, project_id`,
     lineValues.flat()
   );
 
   logger.info(
     `LedgerEngine: inserted ${linesResult.rowCount} journal lines for entry ${entry.entry_number}`
   );
-
-  // ==========================================
-  // STEP 4: Validate Account Existence (balance calculated from journal_items)
-  // ==========================================
-  for (const line of data.lines) {
-    const accountResult = await client.query(
-      `SELECT id, type FROM chart_of_accounts WHERE id = $1`,
-      [line.accountId]
-    );
-
-    if (accountResult.rows.length === 0) {
-      throw new Error(`Account ${line.accountId} not found in chart_of_accounts`);
-    }
-
-    // Balance is calculated dynamically from journal_items in getTrialBalance()
-    // No need to update opening_balance here - it represents period start balance
-  }
 
   // ==========================================
   // STEP 5: Return Complete Entry
@@ -209,9 +348,7 @@ export async function postJournalEntry(
       description: row.description,
       debit: parseFloat(row.debit),
       credit: parseFloat(row.credit),
-      partnerId: row.partner_id,
       costCenterId: row.cost_center_id,
-      projectId: row.project_id,
     })),
   };
 
@@ -243,7 +380,7 @@ export async function postAndFinalizeEntry(
 
   await client.query(
     `UPDATE journal_entries
-     SET status = 'Posted', approved_by = $1, approved_at = NOW()
+     SET status = 'Posted', posted_by = $1, posted_at = NOW()
      WHERE id = $2`,
     [approvedBy || null, entry.id]
   );
@@ -287,18 +424,18 @@ export async function voidJournalEntry(
   );
 
   if (entryResult.rows.length === 0) {
-    throw new Error(`Journal entry ${entryId} not found or not in Posted status`);
+    throw new LedgerValidationError(`Journal entry ${entryId} not found or not in Posted status`);
   }
 
   const originalEntry = entryResult.rows[0];
 
   const linesResult = await client.query(
-    `SELECT * FROM journal_items WHERE journal_entry_id = $1`,
+    `SELECT * FROM journal_entry_lines WHERE journal_entry_id = $1`,
     [entryId]
   );
 
   if (linesResult.rows.length === 0) {
-    throw new Error(`No journal lines found for entry ${entryId}`);
+    throw new LedgerValidationError(`No journal lines found for entry ${entryId}`);
   }
 
   // Mark original entry as Voided
@@ -319,14 +456,16 @@ export async function voidJournalEntry(
     description: `Reversal of: ${line.description || originalEntry.description}`,
     debit: parseFloat(line.credit), // Swap: credit becomes debit
     credit: parseFloat(line.debit), // Swap: debit becomes credit
-    partnerId: line.partner_id,
     costCenterId: line.cost_center_id,
+    partnerId: line.partner_id,
     projectId: line.project_id,
   }));
 
   const reversingEntry = await postJournalEntry(
     {
-      entryDate: new Date(),
+      // Date the reversal like the original entry so it nets inside the same
+      // fiscal period instead of landing in a later (possibly closed) one.
+      entryDate: originalEntry.entry_date as Date,
       description: `Reversal of ${originalEntry.entry_number}: ${reason}`,
       descriptionEn: `Reversal of ${originalEntry.entry_number}: ${reason}`,
       referenceType: 'JournalEntryReversal',
@@ -341,7 +480,7 @@ export async function voidJournalEntry(
   // Immediately post the reversing entry
   await client.query(
     `UPDATE journal_entries
-     SET status = 'Posted', approved_by = $1, approved_at = NOW()
+     SET status = 'Posted', posted_by = $1, posted_at = NOW()
      WHERE id = $2`,
     [voidedBy || null, reversingEntry.id]
   );
@@ -378,27 +517,27 @@ export async function getTrialBalance(
 
   if (asOfDate) {
     conditions.push(`je.entry_date <= $${paramIndex}`);
-    params.push(asOfDate.toISOString());
+    params.push(toDateOnly(asOfDate));
     paramIndex++;
   }
 
   const result = await client.query(
     `SELECT
        coa.id AS account_id,
-       coa.code AS account_code,
-       coa.name AS account_name,
-       coa.type AS account_type,
-       COALESCE(SUM(ji.debit), 0) AS total_debit,
-       COALESCE(SUM(ji.credit), 0) AS total_credit,
+       coa.account_code AS account_code,
+       coa.account_name AS account_name,
+       coa.account_type AS account_type,
+       COALESCE(SUM(jel.debit), 0) AS total_debit,
+       COALESCE(SUM(jel.credit), 0) AS total_credit,
        COALESCE(coa.opening_balance, 0) AS opening_balance
-     FROM chart_of_accounts coa
-     LEFT JOIN journal_items ji ON ji.account_id = coa.id
-     LEFT JOIN journal_entries je ON je.id = ji.journal_entry_id
+     FROM accounts coa
+     LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
+     LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id
        AND je.status = 'Posted'
        ${asOfDate ? `AND je.entry_date <= $${paramIndex - 1}` : ''}
      WHERE ${conditions.join(' AND ')}
-     GROUP BY coa.id, coa.code, coa.name, coa.type, coa.opening_balance
-     ORDER BY coa.code ASC`,
+     GROUP BY coa.id, coa.account_code, coa.account_name, coa.account_type, coa.opening_balance
+     ORDER BY coa.account_code ASC`,
     params
   );
 
@@ -409,7 +548,7 @@ export async function getTrialBalance(
 
     // Balance calculation depends on account type
     let balance: number;
-    if (row.account_type === 'Asset' || row.account_type === 'Expense') {
+    if (row.account_type === 'asset' || row.account_type === 'expense') {
       balance = openingBalance + debit - credit;
     } else {
       balance = openingBalance + credit - debit;

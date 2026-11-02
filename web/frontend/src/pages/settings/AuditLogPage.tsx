@@ -1,7 +1,57 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getAuditLogs, getAuditLogsByUser } from '@/api/audit';
+import { getAuditLogs } from '@/api/audit';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+
+const actionLabels: Record<string, string> = {
+  CREATE: 'إنشاء',
+  UPDATE: 'تحديث',
+  DELETE: 'حذف',
+  APPROVE: 'اعتماد',
+  REJECT: 'رفض',
+  POST: 'ترحيل',
+  REVERSE: 'عكس',
+  LOGIN: 'تسجيل دخول',
+  LOGOUT: 'تسجيل خروج',
+};
+
+const entityTypeLabels: Record<string, string> = {
+  Sale: 'فاتورة مبيعات',
+  Purchase: 'أمر شراء',
+  JournalEntry: 'قيد يومي',
+  Account: 'حساب',
+  Product: 'منتج',
+  Customer: 'عميل',
+  Supplier: 'مورد',
+  Employee: 'موظف',
+  FixedAsset: 'أصل ثابت',
+  Budget: 'ميزانية',
+  BankReconciliation: 'تسوية بنكية',
+  Cheque: 'شيك',
+};
+
+function actionBadgeClass(action: string) {
+  switch (action) {
+    case 'CREATE':
+    case 'APPROVE':
+    case 'POST':
+      return 'badge-success';
+    case 'DELETE':
+    case 'REJECT':
+    case 'REVERSE':
+      return 'badge-danger';
+    case 'UPDATE':
+      return 'badge-info';
+    case 'LOGIN':
+    case 'LOGOUT':
+      return 'badge-gray';
+    default:
+      return 'badge-gray';
+  }
+}
 
 export default function AuditLogPage() {
   const [page, setPage] = useState(1);
@@ -25,45 +75,41 @@ export default function AuditLogPage() {
     }),
   });
 
-  const actionLabels: Record<string, string> = {
-    CREATE: 'إنشاء',
-    UPDATE: 'تحديث',
-    DELETE: 'حذف',
-    APPROVE: 'اعتماد',
-    REJECT: 'رفض',
-    POST: 'ترحيل',
-    REVERSE: 'عكس',
-    LOGIN: 'تسجيل دخول',
-    LOGOUT: 'تسجيل خروج',
+  const logs = data?.logs || [];
+  const totalPages = data?.total_pages || 1;
+  const hasFilters = Boolean(filterAction || filterEntityType || filterUserId || startDate || endDate);
+
+  const updateFilter = (setter: () => void) => {
+    setter();
+    setPage(1);
   };
 
-  const entityTypeLabels: Record<string, string> = {
-    Sale: 'فاتورة مبيعات',
-    Purchase: ' أمر شراء',
-    JournalEntry: 'قيد يومي',
-    Account: 'حساب',
-    Product: 'منتج',
-    Customer: 'عميل',
-    Supplier: 'مورد',
-    Employee: 'موظف',
-    FixedAsset: 'أصل ثابت',
-    Budget: 'ميزانية',
-    BankReconciliation: 'تسوية بنكية',
+  const clearFilters = () => {
+    setFilterAction('');
+    setFilterEntityType('');
+    setFilterUserId('');
+    setStartDate('');
+    setEndDate('');
+    setPage(1);
   };
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">سجل التدقيق</h1>
+      <PageHeader
+        title="سجل التدقيق"
+        subtitle="متابعة جميع العمليات التي تمت على النظام"
+        icon={<svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>}
+      />
 
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-lg shadow">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="card p-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div>
-            <label className="block text-sm font-medium mb-1">الإجراء</label>
+            <label htmlFor="audit-action" className="label">الإجراء</label>
             <select
+              id="audit-action"
               value={filterAction}
-              onChange={(e) => setFilterAction(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
+              onChange={(e) => updateFilter(() => setFilterAction(e.target.value))}
+              className="select w-full"
             >
               <option value="">جميع الإجراءات</option>
               {Object.entries(actionLabels).map(([key, label]) => (
@@ -72,11 +118,12 @@ export default function AuditLogPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">نوع الكيان</label>
+            <label htmlFor="audit-entity" className="label">نوع الكيان</label>
             <select
+              id="audit-entity"
               value={filterEntityType}
-              onChange={(e) => setFilterEntityType(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
+              onChange={(e) => updateFilter(() => setFilterEntityType(e.target.value))}
+              className="select w-full"
             >
               <option value="">جميع الأنواع</option>
               {Object.entries(entityTypeLabels).map(([key, label]) => (
@@ -85,172 +132,190 @@ export default function AuditLogPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">المستخدم</label>
+            <label htmlFor="audit-user" className="label">المستخدم</label>
             <input
+              id="audit-user"
               type="number"
+              inputMode="numeric"
               value={filterUserId}
-              onChange={(e) => setFilterUserId(e.target.value ? Number(e.target.value) : '')}
+              onChange={(e) => updateFilter(() => setFilterUserId(e.target.value ? Number(e.target.value) : ''))}
               placeholder="معرف المستخدم"
-              className="w-full border rounded-lg px-3 py-2"
+              className="input w-full"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">من تاريخ</label>
+            <label htmlFor="audit-start" className="label">من تاريخ</label>
             <input
+              id="audit-start"
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
+              onChange={(e) => updateFilter(() => setStartDate(e.target.value))}
+              className="input w-full"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">إلى تاريخ</label>
+            <label htmlFor="audit-end" className="label">إلى تاريخ</label>
             <input
+              id="audit-end"
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
+              onChange={(e) => updateFilter(() => setEndDate(e.target.value))}
+              className="input w-full"
             />
           </div>
         </div>
-      </div>
-
-      {/* Audit Logs Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-right">التاريخ والوقت</th>
-              <th className="px-4 py-3 text-right">المستخدم</th>
-              <th className="px-4 py-3 text-right">الإجراء</th>
-              <th className="px-4 py-3 text-right">نوع الكيان</th>
-              <th className="px-4 py-3 text-right">معرف الكيان</th>
-              <th className="px-4 py-3 text-right">الإجراءات</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.logs?.map((log: any) => (
-              <tr key={log.id} className="border-t hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm">
-                  {new Date(log.created_at).toLocaleString('ar-SA')}
-                </td>
-                <td className="px-4 py-3">{log.user_name}</td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-1 rounded-full text-xs ${
-                    log.action === 'DELETE' ? 'bg-red-100 text-red-800' :
-                    log.action === 'CREATE' ? 'bg-green-100 text-green-800' :
-                    log.action === 'UPDATE' ? 'bg-blue-100 text-blue-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {actionLabels[log.action] || log.action}
-                  </span>
-                </td>
-                <td className="px-4 py-3">{entityTypeLabels[log.entity_type] || log.entity_type}</td>
-                <td className="px-4 py-3">{log.entity_id}</td>
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => setSelectedLog(log)}
-                    className="text-blue-600 hover:underline text-sm"
-                  >
-                    التفاصيل
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {data?.logs?.length === 0 && (
-          <div className="p-4 text-center text-gray-500">لا توجد سجلات</div>
+        {hasFilters && (
+          <div className="mt-3 flex justify-end">
+            <button type="button" onClick={clearFilters} className="btn-ghost btn-sm">
+              مسح الفلاتر
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Pagination */}
-      {data?.total_pages > 1 && (
-        <div className="flex justify-center gap-2">
-          <button
-            onClick={() => setPage(Math.max(1, page - 1))}
-            disabled={page === 1}
-            className="px-3 py-1 border rounded disabled:opacity-50"
-          >
-            السابق
-          </button>
-          <span className="px-3 py-1">
-            صفحة {page} من {data.total_pages}
-          </span>
-          <button
-            onClick={() => setPage(Math.min(data.total_pages, page + 1))}
-            disabled={page === data.total_pages}
-            className="px-3 py-1 border rounded disabled:opacity-50"
-          >
-            التالي
-          </button>
-        </div>
-      )}
+      <div className="card overflow-hidden p-0">
+        {isLoading && !data ? (
+          <div className="flex items-center justify-center py-16">
+            <LoadingSpinner />
+          </div>
+        ) : logs.length === 0 ? (
+          <EmptyState
+            title="لا توجد سجلات"
+            description="لم يتم العثور على أي عمليات مطابقة للفلاتر الحالية"
+          />
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px]" aria-label="سجل التدقيق">
+                <thead className="table-header">
+                  <tr>
+                    <th scope="col" className="px-4 py-3 text-right">التاريخ والوقت</th>
+                    <th scope="col" className="px-4 py-3 text-right">المستخدم</th>
+                    <th scope="col" className="px-4 py-3 text-right">الإجراء</th>
+                    <th scope="col" className="px-4 py-3 text-right">نوع الكيان</th>
+                    <th scope="col" className="px-4 py-3 text-right">معرف الكيان</th>
+                    <th scope="col" className="px-4 py-3 text-right">التفاصيل</th>
+                  </tr>
+                </thead>
+                <tbody className={isLoading ? 'opacity-60' : undefined}>
+                  {logs.map((log: any) => (
+                    <tr key={log.id} className="table-row">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm tabular-nums">
+                        {new Date(log.created_at).toLocaleString('ar-SA')}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{log.user_name || '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={actionBadgeClass(log.action)}>
+                          {actionLabels[log.action] || log.action}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {entityTypeLabels[log.entity_type] || log.entity_type || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums">{log.entity_id ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLog(log)}
+                          className="text-sm font-medium text-primary-600 hover:underline dark:text-primary-400"
+                        >
+                          التفاصيل
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-      {/* Detail Modal */}
+            <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-100 px-4 py-3 sm:flex-row dark:border-zinc-800">
+              <span className="text-xs text-gray-500 dark:text-zinc-400">
+                صفحة {page} من {totalPages}
+                {typeof data?.total === 'number' ? ` — ${data.total} سجل` : ''}
+              </span>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage(Math.max(1, page - 1))}
+                    disabled={page <= 1}
+                    className="btn-secondary btn-sm"
+                  >
+                    السابق
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPage(Math.min(totalPages, page + 1))}
+                    disabled={page >= totalPages}
+                    className="btn-secondary btn-sm"
+                  >
+                    التالي
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
       {selectedLog && (
-        <Modal onClose={() => setSelectedLog(null)} title="تفاصيل سجل التدقيق">
+        <Modal isOpen onClose={() => setSelectedLog(null)} title="تفاصيل سجل التدقيق">
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="text-sm text-gray-500">التاريخ والوقت</label>
-                <p className="font-medium">{new Date(selectedLog.created_at).toLocaleString('ar-SA')}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">التاريخ والوقت</p>
+                <p className="text-sm font-medium">{new Date(selectedLog.created_at).toLocaleString('ar-SA')}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">المستخدم</label>
-                <p className="font-medium">{selectedLog.user_name}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">المستخدم</p>
+                <p className="text-sm font-medium">{selectedLog.user_name || '—'}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">الإجراء</label>
-                <p className="font-medium">{actionLabels[selectedLog.action] || selectedLog.action}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">الإجراء</p>
+                <p className="text-sm font-medium">{actionLabels[selectedLog.action] || selectedLog.action}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">نوع الكيان</label>
-                <p className="font-medium">{entityTypeLabels[selectedLog.entity_type] || selectedLog.entity_type}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">نوع الكيان</p>
+                <p className="text-sm font-medium">
+                  {entityTypeLabels[selectedLog.entity_type] || selectedLog.entity_type}
+                </p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">معرف الكيان</label>
-                <p className="font-medium">{selectedLog.entity_id}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">معرف الكيان</p>
+                <p className="text-sm font-medium tabular-nums">{selectedLog.entity_id}</p>
               </div>
               <div>
-                <label className="text-sm text-gray-500">عنوان IP</label>
-                <p className="font-medium">{selectedLog.ip_address}</p>
+                <p className="text-xs text-gray-500 dark:text-zinc-400">عنوان IP</p>
+                <p className="text-sm font-medium tabular-nums">{selectedLog.ip_address || '—'}</p>
               </div>
             </div>
 
-            {/* Old Value */}
             {selectedLog.old_value && (
               <div>
-                <label className="text-sm text-gray-500 mb-2 block">القيمة القديمة</label>
-                <pre className="bg-gray-100 p-3 rounded text-sm overflow-auto max-h-40">
+                <p className="mb-2 text-xs text-gray-500 dark:text-zinc-400">القيمة القديمة</p>
+                <pre className="max-h-40 overflow-auto rounded-lg bg-gray-100 p-3 text-xs dark:bg-zinc-800">
                   {JSON.stringify(selectedLog.old_value, null, 2)}
                 </pre>
               </div>
             )}
 
-            {/* New Value */}
             {selectedLog.new_value && (
               <div>
-                <label className="text-sm text-gray-500 mb-2 block">القيمة الجديدة</label>
-                <pre className="bg-gray-100 p-3 rounded text-sm overflow-auto max-h-40">
+                <p className="mb-2 text-xs text-gray-500 dark:text-zinc-400">القيمة الجديدة</p>
+                <pre className="max-h-40 overflow-auto rounded-lg bg-gray-100 p-3 text-xs dark:bg-zinc-800">
                   {JSON.stringify(selectedLog.new_value, null, 2)}
                 </pre>
               </div>
             )}
 
             <div className="flex justify-end">
-              <button
-                onClick={() => setSelectedLog(null)}
-                className="px-4 py-2 border rounded-lg"
-              >
+              <button type="button" onClick={() => setSelectedLog(null)} className="btn-secondary">
                 إغلاق
               </button>
             </div>
           </div>
         </Modal>
       )}
-
-      {isLoading && <div className="text-center py-4">جاري التحميل...</div>}
     </div>
   );
 }

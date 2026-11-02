@@ -17,7 +17,6 @@
  */
 
 import { PoolClient } from 'pg';
-import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { logger } from '../../services/logger';
 import {
@@ -29,14 +28,11 @@ import {
 } from './types';
 
 export class EventBus {
-  private emitter: EventEmitter;
   private subscriptions: Map<string, EventSubscription[]>;
   private static instance: EventBus | null = null;
 
   private constructor() {
-    this.emitter = new EventEmitter();
     this.subscriptions = new Map();
-    this.emitter.setMaxListeners(50);
   }
 
   /**
@@ -97,7 +93,7 @@ export class EventBus {
     payload: EventPayloadMap[K],
     client: PoolClient,
     metadata: { userId?: number; companyId?: number; branchId?: number } = {}
-  ): Promise<void> {
+  ): Promise<{ correlationId: string; results: unknown[] }> {
     const event = {
       id: randomUUID(),
       type: eventType,
@@ -105,7 +101,7 @@ export class EventBus {
       correlationId: randomUUID(),
       payload,
       metadata,
-    } as BaseEvent;
+    } as unknown as BaseEvent;
 
     logger.info(`EventBus: emitting "${eventType}" [${event.id}]`);
 
@@ -118,16 +114,20 @@ export class EventBus {
 
     if (allHandlers.length === 0) {
       logger.warn(`EventBus: no handlers registered for "${eventType}"`);
-      return;
+      return { correlationId: event.correlationId, results: [] };
     }
 
     // Execute all handlers within the same transaction
+    const results: unknown[] = [];
     for (const subscription of allHandlers) {
       try {
         logger.info(
           `EventBus: executing handler for "${eventType}" [${event.id}]`
         );
-        await subscription.handler(event as unknown as BaseEvent<Record<string, unknown>>, client);
+        const handlerResult = await subscription.handler(event as unknown as BaseEvent<Record<string, unknown>>, client);
+        if (handlerResult !== undefined) {
+          results.push(handlerResult);
+        }
         logger.info(
           `EventBus: handler completed for "${eventType}" [${event.id}]`
         );
@@ -143,6 +143,8 @@ export class EventBus {
     logger.info(
       `EventBus: all handlers completed for "${eventType}" [${event.id}]`
     );
+
+    return { correlationId: event.correlationId, results };
   }
 
   /**
@@ -150,7 +152,6 @@ export class EventBus {
    */
   clear(): void {
     this.subscriptions.clear();
-    this.emitter.removeAllListeners();
   }
 
   /**
@@ -169,4 +170,5 @@ export class EventBus {
  * Convenience function to get the EventBus singleton
  */
 export function getEventBus(): EventBus {
-  retur
+  return EventBus.getInstance();
+}

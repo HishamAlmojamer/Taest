@@ -31,9 +31,17 @@ async def get_audit_logs(
     if user_id:
         query = query.where(AuditLog.user_id == user_id)
     if start_date:
-        query = query.where(AuditLog.created_at >= datetime.fromisoformat(start_date))
+        try:
+            start_dt = datetime.fromisoformat(start_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format, expected ISO datetime")
+        query = query.where(AuditLog.created_at >= start_dt)
     if end_date:
-        query = query.where(AuditLog.created_at <= datetime.fromisoformat(end_date))
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format, expected ISO datetime")
+        query = query.where(AuditLog.created_at <= end_dt)
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
