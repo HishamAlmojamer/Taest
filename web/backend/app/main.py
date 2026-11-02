@@ -279,8 +279,8 @@ async def _run_cheques_migrations(conn):
     # granted to admin + accountant roles.
     await conn.execute(text(
         """
-        INSERT INTO permissions (code, name, name_en, module, display_name, category, is_active)
-        SELECT 'MANAGE_CHEQUES', 'إدارة الشيكات', 'Manage Cheques', 'admin', 'Manage Cheques', 'admin', true
+        INSERT INTO permissions (code, name, name_en, module, description)
+        SELECT 'MANAGE_CHEQUES', 'إدارة الشيكات', 'Manage Cheques', 'admin', 'Manage Cheques'
         WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'MANAGE_CHEQUES')
         """
     ))
@@ -309,8 +309,8 @@ async def _run_cheques_migrations(conn):
     for code, *roles in rbac_extra:
         await conn.execute(text(
             f"""
-            INSERT INTO permissions (code, name, name_en, module, display_name, category, is_active)
-            SELECT '{code}', '{code}', '{code}', 'rbac', '{code}', 'rbac', true
+            INSERT INTO permissions (code, name, name_en, module, description)
+            SELECT '{code}', '{code}', '{code}', 'rbac', '{code}'
             WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = '{code}')
             """
         ))
@@ -426,9 +426,9 @@ async def _seed_rbac(conn):
 
     for code, name, name_en, module in permissions_data:
         await conn.execute(text(
-            "INSERT INTO permissions (code, name, name_en, module, display_name, category, is_active) "
-            "VALUES (:code, :name, :name_en, :module, :display, :category, true)"
-        ), {"code": code, "name": name, "name_en": name_en, "module": module, "display": name_en, "category": module})
+            "INSERT INTO permissions (code, name, name_en, module, description) "
+            "VALUES (:code, :name, :name_en, :module, :description)"
+        ), {"code": code, "name": name, "name_en": name_en, "module": module, "description": name_en})
 
     logger.info(f"Seeded {len(permissions_data)} permissions")
 
@@ -556,9 +556,10 @@ async def _ensure_rbac_columns(conn):
     ]
     for statement in migrations:
         try:
-            await conn.execute(text(statement))
+            async with conn.begin_nested():
+                await conn.execute(text(statement))
         except Exception as e:
-            logger.warning("RBAC migration failed (%s): %s", statement[:80], e)
+            logger.warning("RBAC migration skipped (%s): %s", statement[:80], e)
     logger.info("Verified RBAC columns")
 
 
