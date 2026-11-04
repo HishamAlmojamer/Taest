@@ -21,7 +21,7 @@ export function getPool(): Pool {
     const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/warehouse_management';
     const poolConfig: PoolConfig = {
       connectionString,
-      max: 20,
+      max: parseInt(process.env.PG_POOL_MAX || '10', 10),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
     };

@@ -34,6 +34,11 @@ export const config = {
     .filter(Boolean),
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   serveFrontendDir: process.env.SERVE_FRONTEND_DIR || '',
+  // Allow any Cloudflare Pages deployment/preview origin while the project
+  // URL is not final. Disable once CORS_ORIGINS contains the exact URL.
+  allowPagesDev: ['1', 'true', 'yes'].includes(
+    (process.env.ALLOW_PAGES_DEV || '').toLowerCase(),
+  ),
   rateLimitWindow: 60 * 1000,
   rateLimitMax: 100,
 };

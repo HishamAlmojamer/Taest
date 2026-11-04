@@ -54,7 +54,14 @@ app.use(helmet({
   },
 }));
 app.use(cors({
-  origin: config.corsOrigins,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (config.corsOrigins.includes(origin)) return callback(null, true);
+    if (config.allowPagesDev && /^https:\/\/[a-z0-9-]+\.pages\.dev$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

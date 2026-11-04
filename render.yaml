@@ -1,19 +1,19 @@
-# Render Blueprint — free-tier topology.
+# Render Blueprint — free API tier (no credit card required).
 #
-# One free Docker web service runs all three tiers:
-#   gateway (public PORT) + FastAPI (127.0.0.1:8001) + built React SPA
-# plus one free Render PostgreSQL database.
+# Topology:
+#   Cloudflare Pages  -> React SPA (free, no card)
+#   Render free web   -> Docker image with gateway + FastAPI
+#   Neon free Postgres -> DATABASE_URL (permanent free plan, no card)
 #
-# Free-plan caveats (verify current limits at https://render.com/pricing):
-#   - free web services sleep after inactivity (~50s cold start);
-#   - free PostgreSQL expires 30 days after creation. For a permanent free
-#     database use Neon (https://neon.tech) and set DATABASE_URL manually.
-#
-# Set BOOTSTRAP_ADMIN_PASSWORD when creating the Blueprint (dashboard prompt).
-# The password is stored only in Render, never in this repository.
+# Free-tier caveats (verified Nov 2026):
+#   - Render free web services sleep after 15 minutes idle (~1 min cold start)
+#     and have 512 MB RAM / 0.1 CPU / 750 instance hours per workspace/month.
+#   - Neon Free is permanent, no card, 1 GB storage and 100 CU-hours/project.
+#   - Cloudflare Pages static hosting is free with unlimited requests.
+# Do not use Render's free Postgres here: it expires after 30 days.
 
 envVarGroups:
-  - name: erp-shared
+  - name: erp-api-shared
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -23,42 +23,42 @@ envVarGroups:
         value: HS256
       - key: TZ
         value: Asia/Riyadh
-      # Optional cache; disabled so no paid/free Redis add-on is required.
       - key: CACHE_ENABLED
         value: "false"
-      # Same-origin deployment; update if a custom domain is used.
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      - key: PG_POOL_MAX
+        value: "5"
+      # Exact production origin. ALLOW_PAGES_DEV also accepts the generated
+      # <project>.pages.dev preview URLs until you replace this value.
       - key: CORS_ORIGINS
-        value: https://erp-web.onrender.com
+        value: https://erp-frontend.pages.dev
+      - key: ALLOW_PAGES_DEV
+        value: "true"
 
 services:
   - type: web
-    name: erp-web
+    name: erp-api
     runtime: docker
     plan: free
     region: frankfurt
-    dockerfilePath: ./web/Dockerfile.render
+    dockerfilePath: ./web/Dockerfile.api
     dockerContext: ./web
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - fromGroup: erp-shared
+      - fromGroup: erp-api-shared
+      # Paste the Neon connection string (postgresql://...sslmode=require).
+      # Both the gateway and FastAPI use this same value.
       - key: DATABASE_URL
-        fromDatabase:
-          name: erp-db
-          property: connectionString
+        sync: false
       - key: PYTHON_BACKEND_URL
         value: http://127.0.0.1:8001
-      - key: SERVE_FRONTEND_DIR
-        value: /app/public
       - key: BOOTSTRAP_ADMIN_USERNAME
         value: admin
       - key: BOOTSTRAP_ADMIN_PASSWORD
         sync: false
       - key: BOOTSTRAP_ADMIN_FULL_NAME
         value: System Administrator
-
-databases:
-  - name: erp-db
-    plan: free
-    region: frankfurt
-    postgresMajorVersion: "16"

@@ -29,11 +29,27 @@ def _normalize_database_url(raw_url: str) -> tuple[URL, dict]:
     sslmode = query.pop("sslmode", None)
     if sslmode is None:
         sslmode = query.pop("ssl", None)
+
+    # libpq-only parameters that asyncpg does not understand (Neon includes
+    # channel_binding in its copy-paste connection strings).
+    for key in (
+        "channel_binding",
+        "gssencmode",
+        "target_session_attrs",
+        "options",
+        "application_name",
+    ):
+        query.pop(key, None)
     url = url.set(query=query)
 
     connect_args: dict = {}
     if sslmode and str(sslmode).lower() not in {"disable", "allow", "prefer", "false", "0"}:
         connect_args["ssl"] = True
+
+    # Neon/Supabase poolers use PgBouncer in transaction mode. asyncpg's
+    # prepared-statement cache is not compatible with that mode.
+    if "-pooler" in (url.host or ""):
+        connect_args["statement_cache_size"] = 0
 
     return url, connect_args
 
