@@ -4,6 +4,10 @@ set -eu
 cd /app/backend
 /opt/venv/bin/alembic upgrade head
 
+# The backend emits ledger events to the gateway. In the combined container the
+# public port is assigned by the platform (Render sets PORT), so derive it here.
+export GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:${PORT:-3001}}"
+
 /opt/venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8001 \

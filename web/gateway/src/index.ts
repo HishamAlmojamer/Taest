@@ -53,11 +53,15 @@ app.use(helmet({
     },
   },
 }));
+const pagesOriginPattern = new RegExp(
+  `^https://([a-z0-9-]+\\.)?${config.pagesProjectName.replace(/[^a-z0-9-]/g, '')}\\.pages\\.dev$`,
+);
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (config.corsOrigins.includes(origin)) return callback(null, true);
-    if (config.allowPagesDev && /^https:\/\/[a-z0-9-]+\.pages\.dev$/.test(origin)) {
+    if (config.allowPagesDev && pagesOriginPattern.test(origin)) {
       return callback(null, true);
     }
     return callback(null, false);

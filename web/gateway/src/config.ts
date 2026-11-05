@@ -21,6 +21,32 @@ function normalizeUrl(value: string): string {
   return /^https?:\/\//i.test(value) ? value : `http://${value}`;
 }
 
+function isLocalDatabaseUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
+  } catch {
+    return /(^|[@/])(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/i.test(value);
+  }
+}
+
+const databaseUrl = process.env.DATABASE_URL || '';
+if (isProduction) {
+  if (!databaseUrl || isLocalDatabaseUrl(databaseUrl)) {
+    throw new Error('DATABASE_URL must point to a managed PostgreSQL host in production');
+  }
+  const origins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (origins.length === 0) {
+    throw new Error('CORS_ORIGINS must be set in production');
+  }
+  if (origins.includes('*')) {
+    throw new Error("CORS_ORIGINS cannot contain '*' in production");
+  }
+}
+
 export const config = {
   environment,
   isProduction,
@@ -34,11 +60,12 @@ export const config = {
     .filter(Boolean),
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   serveFrontendDir: process.env.SERVE_FRONTEND_DIR || '',
-  // Allow any Cloudflare Pages deployment/preview origin while the project
-  // URL is not final. Disable once CORS_ORIGINS contains the exact URL.
+  // Allow this Cloudflare Pages project's production and preview origins while
+  // the final URL is not known. Disable once CORS_ORIGINS is exact.
   allowPagesDev: ['1', 'true', 'yes'].includes(
     (process.env.ALLOW_PAGES_DEV || '').toLowerCase(),
   ),
+  pagesProjectName: (process.env.CF_PAGES_PROJECT || 'erp-frontend').toLowerCase(),
   rateLimitWindow: 60 * 1000,
   rateLimitMax: 100,
 };

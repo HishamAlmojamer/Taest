@@ -37,6 +37,8 @@ envVarGroups:
         value: https://erp-frontend.pages.dev
       - key: ALLOW_PAGES_DEV
         value: "true"
+      - key: CF_PAGES_PROJECT
+        value: erp-frontend
 
 services:
   - type: web

@@ -48,6 +48,15 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
 
+def _database_host(raw_url: str) -> str:
+    try:
+        from sqlalchemy.engine import make_url
+
+        return (make_url(raw_url).host or "").lower()
+    except Exception:
+        return ""
+
+
 def validate_settings(s: Settings) -> None:
     if len(s.JWT_SECRET or "") < 32:
         raise RuntimeError("JWT_SECRET must be at least 32 characters long")
@@ -62,6 +71,15 @@ def validate_settings(s: Settings) -> None:
             raise RuntimeError("JWT_SECRET is still a placeholder value")
         if s.DEBUG:
             raise RuntimeError("DEBUG must be disabled in production")
+        db_host = _database_host(s.DATABASE_URL)
+        if not db_host or db_host in {"localhost", "127.0.0.1", "::1"}:
+            raise RuntimeError(
+                "DATABASE_URL must point to a managed PostgreSQL host in production"
+            )
+        if not s.cors_origins:
+            raise RuntimeError("CORS_ORIGINS must be set in production")
+        if "*" in s.cors_origins:
+            raise RuntimeError("CORS_ORIGINS cannot contain '*' in production")
     if s.BOOTSTRAP_ADMIN_USERNAME and not s.BOOTSTRAP_ADMIN_PASSWORD:
         raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD is required when BOOTSTRAP_ADMIN_USERNAME is set")
 
